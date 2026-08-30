@@ -1,0 +1,19 @@
+{
+  "name": "mfui-job-runner",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts",
+    "db:generate": "prisma generate --schema=../../prisma/schema.prisma"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3",
+    "@prisma/client": "^6.11.1",
+    "cuid": "^3.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.11.1",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0"
+  }
+}

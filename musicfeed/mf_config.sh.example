@@ -1,0 +1,10 @@
+# musicfeed 配置模板 —— 复制为 mf_config.sh 后按需修改（或直接跑 mf_setup.sh 生成）
+MF_LANG="zh"
+MF_BASE_DIR="$HOME/navidrome/music"
+MF_YTDLP="yt-dlp"
+# 可选：独立 venv 路径（mf_setup 可创建；非空时内核自动前置其 bin 到 PATH）
+MF_VENV=""
+MF_NODE_PATH=""
+MF_DEFAULT_ARTIST_DIR="musicfeed"
+MF_AUDIO_FORMAT="opus"
+declare -a MF_HIDDEN_DIRS=("attachments" "@eaDir" ".DS_Store")

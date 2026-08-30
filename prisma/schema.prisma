@@ -1,0 +1,54 @@
+// musicfeed - Prisma schema
+// Task ID: 6+7 — Web UI + Prisma schema (mock data first, backend later)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 下载任务表 — 一条记录对应一次 musicfeed.sh 的批量任务
+model Job {
+  id              String   @id @default(cuid())
+  url             String
+  /// album | ytm_radio | playlist | single | unknown
+  linkType        String
+  title           String?
+  artist          String?
+  trackCount      Int?
+  /// 歌手文件夹（$MF_BASE_DIR 下的子目录）
+  artistDir       String
+  /// 仅 single 类型可选子文件夹
+  subfolder       String?
+  /// unified | per-track
+  coverMode       String
+  /// album 类型用，对应 ID3 ALBUMARTIST
+  albumArtist     String?
+  /// "1,3,5-7" | "all"
+  tracks          String
+  /// opus | m4a
+  format          String
+  /// mv | ytm （仅 playlist 类型用）
+  playlistMode    String?
+  /// manual | default （仅 MV 曲目用）
+  mvStrategy      String?
+  /// pending | running | completed | failed | cancelled
+  status          String   @default("pending")
+  /// worker 进程 PID（用于取消）
+  pid             Int?
+  /// 日志文件路径
+  logFile         String?
+  /// 已下载曲目数
+  downloadedCount Int      @default(0)
+  /// 失败原因
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+}

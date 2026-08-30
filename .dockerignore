@@ -1,0 +1,13 @@
+.git
+node_modules
+mini-services/job-runner/node_modules
+.next
+.venv
+logs
+db/*.db
+db/*.db-journal
+*.log
+download
+dist
+worklog.md
+musicfeed/dist

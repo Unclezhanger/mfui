@@ -1,0 +1,42 @@
+# 依赖
+node_modules/
+mini-services/job-runner/node_modules/
+
+# 数据库
+db/custom.db
+db/custom.db-journal
+
+# 日志
+/logs/
+musicfeed/log/
+dev.log
+
+# 上传文件
+upload/
+
+# 沙箱测试产物
+.next/
+agent-ctx/
+*.tar.gz
+
+# 环境变量（包含路径，每个用户不同）
+.env
+
+# 临时文件
+*.tmp
+*.bak
+
+# Python venv（yt-dlp 隔离环境）
+.venv/
+
+# 运行时产物
+server.log
+dev.pid
+
+# 沙箱平台脚本（web agent 环境专用，本地无用）
+.zscripts/
+
+# musicfeed 本地配置（每台机器不同，不入库；模板见 mf_config.sh.example）
+musicfeed/mf_config.sh
+musicfeed/log/
+dist/
