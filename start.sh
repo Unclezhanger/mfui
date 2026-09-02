@@ -125,6 +125,7 @@ check_dependencies() {
   command -v node &>/dev/null || missing+=("node (>=20)")
   command -v ffmpeg &>/dev/null || missing+=("ffmpeg")
   command -v python3 &>/dev/null || missing+=("python3")
+  command -v curl &>/dev/null || missing+=("curl (封面下载需要)")
   # yt-dlp / mutagen：优先用项目 venv，没有则回退系统安装
   if [[ -n "${MF_YTDLP:-}" ]]; then
     "$MF_YTDLP" --version &>/dev/null || missing+=("venv 内 yt-dlp")

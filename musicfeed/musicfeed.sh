@@ -699,6 +699,10 @@ download_cover() {
     local url=""
     url=$(get_cover_url "$json_file")
     if [ -n "$url" ]; then
+        if ! command -v curl &>/dev/null; then
+            echo "  curl not found, cannot download cover" >&2
+            return 1
+        fi
         local tmp="/tmp/cover_$$.jpg"
         curl -sL "$url" -o "$tmp" 2>/dev/null
         if [ -f "$tmp" ] && [ "$(file_size "$tmp" 2>/dev/null)" -gt 10240 ]; then

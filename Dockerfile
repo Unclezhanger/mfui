@@ -43,7 +43,7 @@ RUN cd .next/standalone \
 FROM node:20-bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg python3 python3-venv python3-pip ca-certificates tini \
+        ffmpeg python3 python3-venv python3-pip ca-certificates curl tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

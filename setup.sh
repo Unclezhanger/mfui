@@ -96,6 +96,7 @@ DEP_PYTHON_VER="" DEP_NODE_VER="" DEP_MUTAGEN_VER=""
 DEP_VENV_YTDLP_VER="" DEP_VENV_MUTAGEN_VER=""
 DEP_BASH_INSTALLED=0 DEP_YTDLP_INSTALLED=0 DEP_FFMPEG_INSTALLED=0
 DEP_PYTHON_INSTALLED=0 DEP_NODE_INSTALLED=0 DEP_MUTAGEN_INSTALLED=0
+DEP_CURL_INSTALLED=0
 
 MF_VENV_DIR="$SCRIPT_DIR/.venv"
 
@@ -112,6 +113,7 @@ detect_dependencies() {
   command -v ffmpeg &>/dev/null && DEP_FFMPEG_INSTALLED=1
   command -v python3 &>/dev/null && DEP_PYTHON_INSTALLED=1
   command -v node &>/dev/null && DEP_NODE_INSTALLED=1
+  command -v curl &>/dev/null && DEP_CURL_INSTALLED=1
 
   # node 版本检查（Next.js 16 需要 >= 20）
   DEP_NODE_OK=0
@@ -148,6 +150,7 @@ detect_dependencies() {
   print_dep_row "node>=20" "$DEP_NODE_VER"   $DEP_NODE_OK           true
   print_dep_row "ffmpeg"  "$DEP_FFMPEG_VER"  $DEP_FFMPEG_INSTALLED  true
   print_dep_row "python3" "$DEP_PYTHON_VER" $DEP_PYTHON_INSTALLED true
+  print_dep_row "curl"    ""                 $DEP_CURL_INSTALLED    true
   # python3-venv：项目 venv 已建 → ok；否则检测系统能否创建 venv（ensurepip 可用即视为有）
   if [[ -x "$MF_VENV_DIR/bin/pip" ]]; then
     print_dep_row "venv(python)" "项目 .venv 已创建" 1 true
@@ -229,6 +232,11 @@ install_system_deps() {
   if [[ $DEP_FFMPEG_INSTALLED -eq 0 ]]; then
     run_install "ffmpeg" "$DEP_FFMPEG_VER" "安装 ffmpeg" \
       "sudo apt update && sudo apt install -y ffmpeg" "y"
+  fi
+
+  if [[ $DEP_CURL_INSTALLED -eq 0 ]]; then
+    run_install "curl" "" "安装 curl（封面下载需要）" \
+      "sudo apt update && sudo apt install -y curl" "y"
   fi
 
   if [[ $DEP_PYTHON_INSTALLED -eq 0 ]]; then
