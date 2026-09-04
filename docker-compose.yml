@@ -3,24 +3,24 @@ name: mfui
 services:
   mfui:
     image: ghcr.io/unclezhanger/mfui:latest
-    # 本地构建时注释掉 image、改用：
+    # Comment out image during local build and use instead:
     # build: .
     container_name: mfui
     restart: unless-stopped
     ports:
       - "3010:3010"
     environment:
-      # yt-dlp 自动更新（默认开；设 0 关闭，改为仅构建时版本）
+      # yt-dlp auto-update (enabled by default; set to 0 to disable, use build-time version only)
       MF_YTDLP_AUTOUPDATE: "1"
-      # 时区（影响日志时间戳与「今日下载」统计）
+      # Timezone (affects log timestamps and 'today's downloads' statistics)
       TZ: Asia/Shanghai
-    # 可选：容器内自定义 DNS（如你的局域网广告过滤 DNS）
+    # Optional: custom DNS inside container (e.g., your LAN ad-filtering DNS)
     # dns:
     #   - 192.168.1.1
     volumes:
-      # 音乐库（必改：你的 Navidrome/Jellyfin 音乐目录）
+      # Music library (must change: your Navidrome/Jellyfin music directory)
       - /path/to/your/music:/music
-      # 数据库 / 日志 / 配置 / yt-dlp venv 持久化
+      # Database / logs / config / yt-dlp venv persistence
       - mfui-db:/app/db
       - mfui-log:/app/musicfeed/log
       - mfui-config:/config
