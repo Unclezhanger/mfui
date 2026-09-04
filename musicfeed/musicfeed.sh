@@ -572,6 +572,7 @@ if fpath.endswith('.m4a'):
         print(f'  ✅ +Cover: {os.path.basename(fpath)}')
     else:
         print(f'  ✅ ID3: {os.path.basename(fpath)}')
+    audio.save()
 else:
     from mutagen.oggopus import OggOpus
     audio = OggOpus(fpath)
