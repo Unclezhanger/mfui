@@ -43,7 +43,6 @@ export function Sidebar() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
   }, [])
 
@@ -51,7 +50,6 @@ export function Sidebar() {
     <aside className="sticky top-0 hidden h-screen w-60 flex-col gap-3 border-r border-border bg-sidebar p-4 md:flex">
       {/* Logo */}
       <div className="flex items-center gap-2 px-1 py-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo.png" alt="mfui logo" className="size-9 rounded-lg shadow-sm" />
         <div className="flex flex-col">
           <span className="font-semibold leading-tight">mfui</span>
@@ -137,7 +135,6 @@ export function MobileTabBar() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
   }, [])
 

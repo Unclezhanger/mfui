@@ -64,7 +64,6 @@ export function DownloadOptions() {
     if (preview.type === 'single' && preview.hasMetadata === false) {
       setForm({ mvManualEdit: false })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview?.type, confirmTracks])
 
   // v4.3: 单 MV（无元数据）预填 —— 与 MV 播放列表开关同构：
@@ -82,7 +81,6 @@ export function DownloadOptions() {
     } else {
       setForm({ mvTitle: raw, mvArtist: uploader, mvAlbum: raw })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview?.type, confirmTracks, form.mvManualEdit])
 
   // v4.3: MV 播放列表（mv 模式）——为选中的无元数据曲目预填逐曲元数据：
@@ -107,7 +105,6 @@ export function DownloadOptions() {
       }
     }
     if (changed) setForm({ mvTracks: next })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview?.type, confirmTracks, form.playlistMode, form.mvManualEdit])
 
   if (!preview) return null
