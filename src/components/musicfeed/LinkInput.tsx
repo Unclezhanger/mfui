@@ -34,7 +34,8 @@ function parseUrls(text: string): string[] {
     const matches = line.match(/https?:\/\/[^\s)\]]+/g)
     if (matches?.length) {
       for (const raw of matches) {
-        const url = raw.trim().replace(/[>,.;]+$/g, '')
+        const url = raw.trim().replace(/[>,.
+;]+$/g, '')
         if (!seen.has(url)) {
           seen.add(url)
           urls.push(url)
@@ -72,11 +73,13 @@ export function LinkInput() {
     const q = new URLSearchParams(window.location.search).get('url')
     if (q && detectLinkType(q) !== 'unknown') {
       setUrlInput(q)
-      useMusicFeedStore.getState().setForm({ url: q })
-      void useMusicFeedStore.getState().previewLink(q)
+      const state = useMusicFeedStore.getState()
+      state.setForm({ url: q })
+      void state.previewLink(q)
       window.history.replaceState(null, '', '/')
     }
   }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const handlePreview = async () => {
     const urls = parseUrls(urlInput)
