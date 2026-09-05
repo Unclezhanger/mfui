@@ -280,7 +280,7 @@ install_system_deps() {
       # (pip would otherwise keep the stale nightly, since --upgrade only moves to the
       # latest *stable* from PyPI, and the nightly ask below defaults to No).
       info "yt-dlp nightly $venv_ytdlp_ver detected, updating to latest nightly..."
-      if "$MF_VENV_DIR/bin/pip" install --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
+      if "$MF_VENV_DIR/bin/pip" install --no-cache-dir --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
         ok "nightly updated in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
       else
         warn "nightly update failed, keeping existing version $venv_ytdlp_ver"
@@ -302,7 +302,7 @@ install_system_deps() {
       echo "    Note: YouTube frequently updates anti-scrape mechanisms. yt-dlp nightly updates more frequently and better avoids 403 errors."
       if ask_yn "    Use yt-dlp nightly instead? (recommended if you encounter 403)" "n"; then
         info "Installing nightly in venv..."
-        if "$MF_VENV_DIR/bin/pip" install --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
+        if "$MF_VENV_DIR/bin/pip" install --no-cache-dir --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
           ok "nightly installed in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
         else
           warn "nightly install failed, continuing with stable version"
