@@ -71,14 +71,12 @@ export function LinkInput() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('url')
     if (q && detectLinkType(q) !== 'unknown') {
-      setUrlInput(q)
       const state = useMusicFeedStore.getState()
       state.setForm({ url: q })
       void state.previewLink(q)
       window.history.replaceState(null, '', '/')
     }
   }, [])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const handlePreview = async () => {
     const urls = parseUrls(urlInput)
