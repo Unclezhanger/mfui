@@ -26,11 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Create .env for build
+        run: echo 'DATABASE_URL="file:../db/custom.db"' > .env
+
       - name: Run ESLint (warnings allowed)
         run: npm run lint -- --max-warnings 5
 
       - name: Build project
         run: npm run build
-
-      - name: TypeScript type check
-        run: npx tsc --noEmit

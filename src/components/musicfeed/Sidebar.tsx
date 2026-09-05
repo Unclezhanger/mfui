@@ -55,7 +55,7 @@ export function Sidebar() {
         <img src="/logo.png" alt="mfui logo" className="size-9 rounded-lg shadow-sm" />
         <div className="flex flex-col">
           <span className="font-semibold leading-tight">mfui</span>
-          <span className="text-[10px] text-muted-foreground">v4.4.0 · 内核 v3.5.0</span>
+          <span className="text-[10px] text-muted-foreground">v4.4.2 · {t('内核')} v3.5.1</span>
         </div>
         <Badge
           variant="outline"

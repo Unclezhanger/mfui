@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
-import process from 'process'
 import type { LogEntry, LogLevel } from '@/lib/types'
 import { getJob } from '../../../_lib/jobs'
+import { getProjectRoot } from '@/lib/paths'
 
-const PROJECT_ROOT = process.cwd()
+const PROJECT_ROOT = getProjectRoot()
 const LOG_DIR = path.join(PROJECT_ROOT, 'musicfeed', 'log')
 
 const LEVELS: LogLevel[] = ['info', 'warn', 'error', 'debug']

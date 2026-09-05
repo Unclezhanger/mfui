@@ -297,6 +297,7 @@ const DICT: Record<string, string> = {
   '{n} 天前': '{n} d ago',
   '{n} 小时前': '{n} h ago',
   '专辑（留空 = 同歌名）': 'Album (empty = same as title)',
+  '内核': 'kernel',
   '作为选文件夹列表的第 1 项（默认选项）': 'Shown as the first entry in the folder list (default)',
   '全部': 'All',
   '已删除任务记录': 'Job record deleted',

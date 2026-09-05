@@ -1,14 +1,14 @@
 {
-  "name": "mfui - YouTube Music 智能下载器",
+  "name": "mfui - YouTube Music Smart Downloader",
   "short_name": "mfui",
-  "description": "把 YouTube Music 专辑/播放列表/单曲/MV 智能下载并归档到本地音乐库",
+  "description": "Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#09090b",
   "theme_color": "#059669",
-  "lang": "zh",
+  "lang": "en",
   "icons": [
     {
       "src": "/icon-192.png",

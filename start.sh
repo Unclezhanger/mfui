@@ -1,36 +1,36 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# start.sh - mfui 一键启动脚本
+# start.sh - mfui One-click Start Script
 #
-# 启动 2 个后台服务：
-#   1. Next.js 前端      (port ${MF_PORT_NEXT:-3010})  日志: logs/next.log
-#   2. WebSocket 服务    (port ${MF_PORT_JOB:-3001}, 仅 127.0.0.1)   日志: logs/job-runner.log
+# Starts 2 background services:
+#   1. Next.js frontend   (port ${MF_PORT_NEXT:-3010})  log: logs/next.log
+#   2. WebSocket service  (port ${MF_PORT_JOB:-3001}, 127.0.0.1 only)   log: logs/job-runner.log
 #
-# 架构：
-#   浏览器 → Next.js:3010 → /api/dependencies, /api/config, /api/folders, /api/jobs 等直接处理
-#                        → /api/proxy/preview, /api/proxy/jobs, /api/proxy/jobs/:id/cancel 转发到 127.0.0.1:3001
-#                        → /socket.io/* 通过 next.config.ts rewrites 转发到 127.0.0.1:3001
-#   mini-service:3001 只监听 127.0.0.1（不对外暴露，安全性提升）
+# Architecture:
+#   Browser → Next.js:3010 → /api/dependencies, /api/config, /api/folders, /api/jobs etc. handled directly
+#                        → /api/proxy/preview, /api/proxy/jobs, /api/proxy/jobs/:id/cancel forwarded to 127.0.0.1:3001
+#                        → /socket.io/* forwarded to 127.0.0.1:3001 via next.config.ts rewrites
+#   mini-service:3001 only listens on 127.0.0.1 (not exposed externally, improved security)
 #
-# 端口配置：
-#   通过环境变量 MF_PORT_NEXT / MF_PORT_JOB 自定义。
-#   未设置时使用默认值（3010 / 3001）。
-#   启动前自动检测端口占用；如果被非本脚本进程占用，自动寻找下一个空闲端口
-#   （最多尝试 50 个连续端口）。
+# Port configuration:
+#   Customizable via environment variables MF_PORT_NEXT / MF_PORT_JOB.
+#   Defaults (3010 / 3001) are used when not set.
+#   Port occupancy is checked before startup; if occupied by a non-script process,
+#   the next free port is automatically found (up to 50 consecutive ports).
 #
-# 设计原则：
-#   1. 启动前检测所有依赖是否就绪（缺失则提示运行 setup.sh）
-#   2. 检测端口是否被占用（占用则自动切换空闲端口，绝不擅自 kill）
-#   3. 重复运行会先尝试 stop.sh 停止旧实例
-#   4. PID 统一存 logs/pids/，方便 stop.sh 管理
+# Design principles:
+#   1. Check all dependencies before startup (prompt to run setup.sh if missing)
+#   2. Check port occupancy (auto-switch to a free port if occupied, never kill arbitrarily)
+#   3. Re-running will first attempt stop.sh to stop old instances
+#   4. PIDs are stored in logs/pids/ for easy management by stop.sh
 #
-# 用法：
-#   bash start.sh                       # 启动（dev 模式，已运行则提示）
-#   bash start.sh --prod                # 生产模式（standalone 产物，无冷编译，
-#                                        #   首次自动构建；日常/手机使用推荐）
-#   bash start.sh -f                    # 强制重启（先 stop 再 start）
-#   bash start.sh --status              # 仅查看运行状态
-#   MF_PORT_NEXT=3015 bash start.sh     # 用自定义端口启动
+# Usage:
+#   bash start.sh                       # Start (dev mode, prompt if already running)
+#   bash start.sh --prod                # Production mode (standalone build, no cold compilation,
+#                                        #   auto-builds on first run; recommended for daily/mobile use)
+#   bash start.sh -f                    # Force restart (stop then start)
+#   bash start.sh --status              # Show running status only
+#   MF_PORT_NEXT=3015 bash start.sh     # Start with custom port
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -uo pipefail
@@ -42,7 +42,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 PID_DIR="$SCRIPT_DIR/logs/pids"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
-# 颜色
+# Colors
 if [[ -t 1 ]] && command -v tput &>/dev/null; then
   C_RED=$(tput setaf 1); C_GREEN=$(tput setaf 2); C_YELLOW=$(tput setaf 3)
   C_BLUE=$(tput setaf 4); C_CYAN=$(tput setaf 6); C_BOLD=$(tput bold)
@@ -58,53 +58,54 @@ info()  { echo "${C_CYAN}ℹ${C_RESET} $1"; }
 title() { echo ""; echo "${C_BOLD}${C_BLUE}══ $1 ══${C_RESET}"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 端口配置（环境变量 + 默认值）
+# Port configuration (environment variables + defaults)
 # ─────────────────────────────────────────────────────────────────────────────
 
 PORT_NEXT="${MF_PORT_NEXT:-3010}"
 PORT_JOB="${MF_PORT_JOB:-3001}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PATH 修复：确保子进程能找到 yt-dlp/ffmpeg/python3/node 等
-# setsid bash -c "..." 启动的子进程不会读 ~/.bashrc，PATH 是最小集，
-# 可能找不到 /usr/local/bin/node 或项目 venv 里的 yt-dlp。
-# 这里显式 export 一个完整 PATH，包含所有常见安装路径。
+# PATH fix: ensure child processes can find yt-dlp/ffmpeg/python3/node etc.
+# Child processes started via setsid bash -c "..." won't read ~/.bashrc,
+# so PATH is minimal and may not find /usr/local/bin/node or
+# yt-dlp in the project venv.
+# Here we explicitly export a complete PATH with all common install paths.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 项目 Python 虚拟环境（yt-dlp / mutagen 都装在里面，与系统隔离）
-# venv 存在时：
-#   - .venv/bin 放到 PATH 最前面（yt-dlp、python3+mutagen 都优先用 venv 的）
-#   - 显式 export MF_YTDLP 指向 venv 内的 yt-dlp（mf_lib.sh 会读取）
+# Project Python virtual environment (yt-dlp / mutagen are installed here, isolated from system)
+# When venv exists:
+#   - .venv/bin is placed at the front of PATH (yt-dlp, python3+mutagen from venv take priority)
+#   - explicitly export MF_YTDLP pointing to yt-dlp inside venv (mf_lib.sh reads this)
 MF_VENV_DIR="$SCRIPT_DIR/.venv"
 if [[ -x "$MF_VENV_DIR/bin/yt-dlp" ]]; then
   export MF_YTDLP="$MF_VENV_DIR/bin/yt-dlp"
-  info "使用项目 venv 的 yt-dlp: $MF_YTDLP"
+  info "Using project venv yt-dlp: $MF_YTDLP"
 fi
 
-# 收集所有可能的 bin 路径，去重后拼成完整 PATH
+# Collect all possible bin paths, deduplicate and assemble a complete PATH
 PATH_DIRS=(
-  "$MF_VENV_DIR/bin"             # 项目 Python venv（最高优先级）
+  "$MF_VENV_DIR/bin"             # Project Python venv (highest priority)
   "/usr/local/bin"
   "/usr/bin"
   "/bin"
   "/usr/local/sbin"
   "/usr/sbin"
   "/sbin"
-  "$HOME/.local/bin"             # pip --user / pipx 安装的命令
-  "$HOME/.npm-global/bin"        # npm -g 安装的命令
-  "$HOME/.nvm/versions/current/bin"  # nvm 安装的 node（若做了 symlink）
-  "$HOME/.cargo/bin"             # rust cargo 安装的命令
-  "$HOME/.venv/bin"              # 用户级 Python venv
+  "$HOME/.local/bin"             # pip --user / pipx installed commands
+  "$HOME/.npm-global/bin"        # npm -g installed commands
+  "$HOME/.nvm/versions/current/bin"  # node installed via nvm (if symlinked)
+  "$HOME/.cargo/bin"             # rust cargo installed commands
+  "$HOME/.venv/bin"              # User-level Python venv
 )
 NEW_PATH=""
 for d in "${PATH_DIRS[@]}"; do
   [[ -d "$d" ]] || continue
   case ":$NEW_PATH:" in
-    *":$d:"*) ;;  # 已存在，跳过
+    *":$d:"*) ;;  # already exists, skip
     *) NEW_PATH="${NEW_PATH:+$NEW_PATH:}$d" ;;
   esac
 done
-# 把原有 PATH 也合并进来（放后面，优先级低）
+# Merge the original PATH as well (appended, lower priority)
 for d in $(echo "$PATH" | tr ':' ' '); do
   case ":$NEW_PATH:" in
     *":$d:"*) ;;
@@ -112,80 +113,81 @@ for d in $(echo "$PATH" | tr ':' ' '); do
   esac
 done
 export PATH="$NEW_PATH"
-info "PATH 已扩展: $PATH"
+info "PATH expanded: $PATH"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 依赖检测（启动前 sanity check）
+# Dependency check (pre-startup sanity check)
 # ─────────────────────────────────────────────────────────────────────────────
 
 check_dependencies() {
-  title "启动前依赖检测"
+  title "Pre-startup dependency check"
   local missing=()
 
   command -v node &>/dev/null || missing+=("node (>=20)")
   command -v ffmpeg &>/dev/null || missing+=("ffmpeg")
   command -v python3 &>/dev/null || missing+=("python3")
-  command -v curl &>/dev/null || missing+=("curl (封面下载需要)")
-  # yt-dlp / mutagen：优先用项目 venv，没有则回退系统安装
+  command -v curl &>/dev/null || missing+=("curl (needed for cover art download)")
+  # yt-dlp / mutagen: prefer project venv, fall back to system install
   if [[ -n "${MF_YTDLP:-}" ]]; then
-    "$MF_YTDLP" --version &>/dev/null || missing+=("venv 内 yt-dlp")
+    "$MF_YTDLP" --version &>/dev/null || missing+=("yt-dlp in venv")
   else
-    command -v yt-dlp &>/dev/null || missing+=("yt-dlp (或运行 setup.sh 创建 venv)")
+    command -v yt-dlp &>/dev/null || missing+=("yt-dlp (or run setup.sh to create venv)")
   fi
   if [[ -x "$MF_VENV_DIR/bin/python3" ]]; then
-    "$MF_VENV_DIR/bin/python3" -c "import mutagen" 2>/dev/null || missing+=("venv 内 mutagen")
+    "$MF_VENV_DIR/bin/python3" -c "import mutagen" 2>/dev/null || missing+=("mutagen in venv")
   else
     python3 -c "import mutagen" 2>/dev/null || missing+=("mutagen")
   fi
 
   if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
-    missing+=("主项目 node_modules (npm install)")
+    missing+=("main project node_modules (npm install)")
   fi
   if [[ ! -d "$SCRIPT_DIR/mini-services/job-runner/node_modules" ]]; then
     missing+=("mini-service node_modules")
   fi
   if [[ ! -f "$SCRIPT_DIR/musicfeed/mf_config.sh" ]]; then
-    missing+=("musicfeed/mf_config.sh (运行 mf_setup.sh)")
+    missing+=("musicfeed/mf_config.sh (run mf_setup.sh)")
   fi
 
   if [[ ${#missing[@]} -gt 0 ]]; then
-    err "以下依赖缺失，无法启动："
+    err "The following dependencies are missing, cannot start:"
     for m in "${missing[@]}"; do
       echo "    - $m"
     done
     echo ""
-    warn "请先运行: ${C_BOLD}bash setup.sh${C_RESET}"
+    warn "Please run first: ${C_BOLD}bash setup.sh${C_RESET}"
     return 1
   fi
-  ok "所有依赖就绪"
+  ok "All dependencies ready"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 端口占用检测
+# Port occupancy detection
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 获取占用端口的进程信息（返回 "PID|CMD" 或空）
-#   注意：非 root 用户无法通过 ss -p 看到其他用户进程的信息，所以这里先用
-#   ss -tln（无 -p）检测端口是否真的在 LISTEN 状态，再用 ss -tlnp 尝试拿
-#   进程信息。拿不到 pid 时返回 "unknown|unknown" 占位，让 caller 知道
-#   端口被占但无法获取 owner。
+# Get process info occupying a port (returns "PID|CMD" or empty)
+#   Note: non-root users cannot see other users' process info via ss -p,
+#   so we first use ss -tln (without -p) to check if the port is actually
+#   in LISTEN state, then use ss -tlnp to try to get process info.
+#   When pid cannot be obtained, returns "unknown|unknown" as a placeholder
+#   to let the caller know the port is occupied but owner is unavailable.
 port_owner() {
   local port="$1"
   local pid=""
   local cmd=""
   if command -v ss &>/dev/null; then
-    # 检测端口是否在 LISTEN 状态（不需要 root 权限）
-    # ss -tln 的 $4 列是 "Local Address:Port"（如 "*:81" 或 "127.0.0.1:3000"）
-    # 用 :$port$ 正则锚定避免匹配 :810 / :8100 等
+    # Check if port is in LISTEN state (no root required)
+    # Column $4 of ss -tln is "Local Address:Port" (e.g. "*:81" or "127.0.0.1:3000")
+    # Use :$port$ regex anchor to avoid matching :810 / :8100 etc.
     if ! ss -tln 2>/dev/null | awk -v p=":$port\$" '
       BEGIN { found=0 }
       $4 ~ p { found=1 }
       END { exit (found ? 0 : 1) }
     '; then
-      # awk 退出码 1 = 端口未在 LISTEN → 空闲，返回空
+      # awk exit code 1 = port not in LISTEN → free, return empty
       return 0
     fi
-    # 端口被占，尝试拿 pid/cmd（拿不到也无所谓）
+    # Port occupied, try to get pid/cmd (ok if unavailable)
     local line=$(ss -tlnp 2>/dev/null | grep -E ":$port\s" | head -1)
     if [[ -n "$line" ]]; then
       pid=$(echo "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
@@ -193,7 +195,7 @@ port_owner() {
         cmd=$(echo "$line" | grep -oE 'users:\(\("[^"]+' | sed 's/users:(("//' | head -1)
       fi
     fi
-    # 即便拿不到 pid，也返回非空占位让 caller 知道端口被占
+    # Even if pid is unavailable, return non-empty placeholder to let caller know port is occupied
     echo "${pid:-unknown}|${cmd:-unknown}"
   elif command -v lsof &>/dev/null; then
     pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
@@ -201,7 +203,7 @@ port_owner() {
       cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
       echo "${pid}|${cmd}"
     else
-      # lsof 拿不到 pid 也可能是权限问题，但端口确实被占
+      # lsof not finding pid may be a permissions issue, but port is indeed occupied
       if lsof -i :"$port" 2>/dev/null | tail -n +2 | grep -q .; then
         echo "unknown|unknown"
       fi
@@ -209,12 +211,12 @@ port_owner() {
   fi
 }
 
-# 找一个空闲端口，从 $1 开始往后找，最多找 $2 个
-#   非 root 用户无法绑定 < 1024 的端口，自动跳过
+# Find a free port, starting from $1, searching up to $2 ports
+#   Non-root users cannot bind ports < 1024, auto-skip
 find_free_port() {
   local start="$1" max_try="${2:-20}"
   local p
-  # 非 root 跳过特权端口（0-1023），从 1024 开始
+  # Non-root: skip privileged ports (0-1023), start from 1024
   if [[ "$(id -u)" -ne 0 ]] && [[ "$start" -lt 1024 ]]; then
     start=1024
   fi
@@ -227,37 +229,38 @@ find_free_port() {
   return 1
 }
 
-# 检查端口是否被占（被自己的服务占用则可继续，被别的进程占用则需处理）
-# 返回值：0=空闲，2=自己的旧实例（先停），3=被别的进程占用
+# Check if port is occupied (if occupied by own service, can continue;
+# if occupied by another process, needs handling)
+# Return: 0=free, 2=own old instance (stop first), 3=occupied by another process
 check_port() {
   local port="$1" name="$2" expected_pid_file="$3"
   local owner=$(port_owner "$port")
 
   if [[ -z "$owner" ]]; then
-    return 0  # 空闲
+    return 0  # free
   fi
 
   local owner_pid="${owner%%|*}"
   local owner_cmd="${owner##*|}"
 
-  # 检查是否是自己的旧实例
+  # Check if it's our own old instance
   if [[ -f "$expected_pid_file" ]]; then
     local my_pid=$(cat "$expected_pid_file" 2>/dev/null)
     if [[ "$owner_pid" == "$my_pid" ]] || kill -0 "$my_pid" 2>/dev/null; then
-      warn "$name (port $port) 被本脚本旧实例占用 (PID $owner_pid)，将先停止"
-      return 2  # 自己的旧实例
+      warn "$name (port $port) occupied by this script's old instance (PID $owner_pid), will stop first"
+      return 2  # own old instance
     fi
   fi
 
-  # 被其他进程占用
-  err "$name (port $port) 被其他进程占用:"
+  # Occupied by another process
+  err "$name (port $port) occupied by another process:"
   echo "    PID:  $owner_pid"
   echo "    CMD:  $owner_cmd"
   return 3
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 进程管理：启动 / 停止 / 检查存活
+# Process management: start / stop / check alive
 # ─────────────────────────────────────────────────────────────────────────────
 
 is_pid_alive() {
@@ -265,27 +268,27 @@ is_pid_alive() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
-# 启动单个服务
+# Start a single service
 #   $1 name   $2 port   $3 pidfile   $4 logfile   $5 cmd   $6 cwd
 start_service() {
   local name="$1" port="$2" pidfile="$3" logfile="$4" cmd="$5" cwd="$6"
 
-  # 检查旧实例是否还活着
+  # Check if old instance is still alive
   if [[ -f "$pidfile" ]]; then
     local old_pid=$(cat "$pidfile" 2>/dev/null)
     if is_pid_alive "$old_pid"; then
-      warn "$name 已在运行 (PID $old_pid)，跳过"
+      warn "$name already running (PID $old_pid), skipping"
       return 0
     else
       rm -f "$pidfile"
     fi
   fi
 
-  # 启动 - 用 setsid 创建新进程组，方便 stop.sh 杀整个进程树
-  info "启动 $name (port $port) ..."
+  # Start - use setsid to create a new process group, so stop.sh can kill the entire process tree
+  info "Starting $name (port $port) ..."
   (
     cd "$cwd"
-    # setsid 让子进程成为新会话领导，PID = 进程组 PGID
+    # setsid makes the child process a new session leader, PID = process group PGID
     setsid bash -c "$cmd" >> "$logfile" 2>&1 &
     echo $! > "$pidfile"
   )
@@ -293,33 +296,34 @@ start_service() {
 
   local new_pid=$(cat "$pidfile" 2>/dev/null)
   if is_pid_alive "$new_pid"; then
-    ok "$name 已启动 (PID $new_pid, PGID $new_pid)"
+    ok "$name started (PID $new_pid, PGID $new_pid)"
   else
-    err "$name 启动失败，查看日志: $logfile"
+    err "$name failed to start, check log: $logfile"
     return 1
   fi
 }
 
-# 解析最终使用的端口（如果默认端口被其他进程占，自动找空闲端口）
+# Resolve the final port to use (if default port is occupied by another process,
+# automatically find a free port)
 #   $1 name   $2 port   $3 pidfile
-# 返回值通过 stdout（端口号）；失败返回非 0
-#   非 root 用户若试图用 < 1024 端口，自动切到 8080 起（避开 1024 边界）
+# Returns port number via stdout; non-zero on failure
+#   Non-root users trying to use ports < 1024 auto-switch to 8080 onwards (avoid 1024 boundary)
 resolve_port() {
   local name="$1" port="$2" pidfile="$3"
 
-  # 非 root 检查：特权端口（< 1024）直接切到 8080 起
-  # 8080 是常用 HTTP 替代端口，比从 1024 乱找更可预测
+  # Non-root check: privileged ports (< 1024) switch directly to 8080 onwards
+  # 8080 is a common HTTP alternative port, more predictable than searching from 1024
   if [[ "$(id -u)" -ne 0 ]] && [[ "$port" -lt 1024 ]]; then
-    warn "$name: 端口 $port < 1024 需要 root 权限"
-    info "非 root 用户，自动切换到 8080 起..."
+    warn "$name: port $port < 1024 requires root privileges"
+    info "Non-root user, auto-switching to 8080 onwards..."
     local new_port
     new_port=$(find_free_port 8080 50)
     if [[ -z "$new_port" ]]; then
-      err "$name: 从 8080 起连续 50 个端口均被占用，启动失败"
-      err "请用环境变量指定一个空闲端口：MF_PORT_NEXT=9090 bash start.sh"
+      err "$name: 50 consecutive ports from 8080 are all occupied, startup failed"
+      err "Please specify a free port via environment variable: MF_PORT_NEXT=9090 bash start.sh"
       return 1
     fi
-    warn "$name: 切换到端口 $new_port"
+    warn "$name: switching to port $new_port"
     echo "$new_port"
     return 0
   fi
@@ -327,56 +331,57 @@ resolve_port() {
   check_port "$port" "$name" "$pidfile"
   local rc=$?
   if [[ $rc -eq 3 ]]; then
-    # 被其他进程占用，自动找空闲端口（从当前 port 往后找 50 个）
-    warn "$name: 端口 $port 被占，自动寻找空闲端口..."
+    # Occupied by another process, auto-find free port (search 50 consecutive ports from current port)
+    warn "$name: port $port occupied, auto-searching for a free port..."
     local new_port
     new_port=$(find_free_port "$port" 50)
     if [[ -z "$new_port" ]]; then
-      err "$name: 从 $port 起连续 50 个端口均被占用，启动失败"
-      err "请用环境变量指定端口：MF_PORT_NEXT=9090 bash start.sh"
+      err "$name: 50 consecutive ports from $port are all occupied, startup failed"
+      err "Please specify a port via environment variable: MF_PORT_NEXT=9090 bash start.sh"
       return 1
     fi
-    warn "$name: 切换到端口 $new_port"
+    warn "$name: switching to port $new_port"
     echo "$new_port"
   else
-    # rc=0 (空闲) 或 rc=2 (自己的旧实例，stop.sh 已处理) 都用原端口
+    # rc=0 (free) or rc=2 (own old instance, stop.sh already handled) → use original port
     echo "$port"
   fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 生产模式：standalone 产物需要访问源目录的 musicfeed/ db/ .venv/.env，
-# 用符号链接桥接（standalone 运行时 cwd 在 .next/standalone）
+# Production mode: standalone build needs to access source directory's musicfeed/ db/ .venv/.env,
+# using symlinks to bridge (standalone runs with cwd in .next/standalone)
 # ─────────────────────────────────────────────────────────────────────────────
 prepare_standalone() {
   local sa="$SCRIPT_DIR/.next/standalone"
-  [ -d "$sa" ] || { err "standalone 目录不存在"; return 1; }
-  # Next 构建会把 db/ musicfeed/ 当依赖文件复制成快照进 standalone，
-  # 导致 API 读到构建时刻的旧数据 —— 先删快照，再换成指向源目录的符号链接
+  [ -d "$sa" ] || { err "standalone directory does not exist"; return 1; }
+  # Next build copies db/ musicfeed/ as dependency snapshots into standalone,
+  # causing API to read stale data from build time — delete snapshots first,
+  # then replace with symlinks pointing to the source directory
   for name in musicfeed db; do
     rm -rf "$sa/$name"
     ln -sfn "../../$name" "$sa/$name"
   done
   ln -sfn ../../.venv "$sa/.venv"
   ln -sfn ../../.env "$sa/.env"
-  ok "standalone 符号链接就绪（musicfeed/db/.venv/.env）"
+  ok "standalone symlinks ready (musicfeed/db/.venv/.env)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 启动所有服务
+# Start all services
 # ─────────────────────────────────────────────────────────────────────────────
 
 start_all() {
-  title "启动 mfui"
+  title "Starting mfui"
 
-  info "端口配置 (来自环境变量 / 默认值):"
+  info "Port configuration (from environment variables / defaults):"
   echo "    Next.js      : $PORT_NEXT  (env MF_PORT_NEXT)"
-  echo "    Job Runner   : $PORT_JOB   (env MF_PORT_JOB, 仅 127.0.0.1)"
+  echo "    Job Runner   : $PORT_JOB   (env MF_PORT_JOB, 127.0.0.1 only)"
 
   # 1. Next.js
-  #   dev：直接用 ./node_modules/.bin/next 启动，确保 PATH 一致
-  #       （API route 需要能找到 yt-dlp 等）
-  #   prod：standalone 产物（node server.js，无冷编译）
+  #   dev: start directly with ./node_modules/.bin/next to ensure consistent PATH
+  #       (API routes need to find yt-dlp etc.)
+  #   prod: standalone build (node server.js, no cold compilation)
   PORT_NEXT=$(resolve_port "Next.js" "$PORT_NEXT" "$PID_DIR/next.pid") || return 1
   export MF_PORT_NEXT="$PORT_NEXT"
   if [[ "$MF_MODE" == "production" ]]; then
@@ -392,72 +397,72 @@ start_all() {
   fi
 
   # 2. WebSocket mini-service
-  #   用项目本地 tsx 直接跑 index.ts（Node 运行时）
-  #   监听 127.0.0.1，不对外暴露
+  #   Use project-local tsx to run index.ts directly (Node runtime)
+  #   Listens on 127.0.0.1, not exposed externally
   PORT_JOB=$(resolve_port "Job Runner" "$PORT_JOB" "$PID_DIR/job-runner.pid") || return 1
   export MF_PORT_JOB="$PORT_JOB"
   start_service "Job Runner" "$PORT_JOB" \
     "$PID_DIR/job-runner.pid" "$LOG_DIR/job-runner.log" \
     "./node_modules/.bin/tsx index.ts" "$SCRIPT_DIR/mini-services/job-runner" || return 1
 
-  # 等待服务就绪
-  title "等待服务就绪"
+  # Wait for services to be ready
+  title "Waiting for services to be ready"
   sleep 2
 
-  # 验证端口
+  # Verify ports
   local all_ok=true
   for pair in "Next.js:$PORT_NEXT" "Job Runner:$PORT_JOB"; do
     local name="${pair%%:*}" port="${pair##*:}"
     if [[ -n "$(port_owner "$port")" ]]; then
-      ok "$name (port $port) 监听中"
+      ok "$name (port $port) listening"
     else
-      err "$name (port $port) 未监听，可能启动失败"
+      err "$name (port $port) not listening, may have failed to start"
       all_ok=false
     fi
   done
 
   if $all_ok; then
-    title "✅ 启动成功"
+    title "✅ Startup successful"
     cat <<EOF
 
-  ${C_BOLD}浏览器访问:${C_RESET}  ${C_GREEN}http://localhost:${PORT_NEXT}${C_RESET}
+  ${C_BOLD}Open in browser:${C_RESET}  ${C_GREEN}http://localhost:${PORT_NEXT}${C_RESET}
 
-  ${C_BOLD}实际使用端口:${C_RESET}
-    Next.js      : $PORT_NEXT  (浏览器访问这个)
-    Job Runner   : $PORT_JOB   (内部 127.0.0.1，不对外暴露)
+  ${C_BOLD}Ports in use:${C_RESET}
+    Next.js      : $PORT_NEXT  (access this in browser)
+    Job Runner   : $PORT_JOB   (internal 127.0.0.1, not exposed externally)
 
-  ${C_BOLD}架构:${C_RESET}
-    浏览器 → Next.js:${PORT_NEXT}
-              ├── /api/dependencies, /api/config, /api/folders, /api/jobs 直接处理
-              ├── /api/proxy/preview, /api/proxy/jobs 等转发到 127.0.0.1:${PORT_JOB}
-              └── /socket.io/* 通过 next.config.ts rewrites 转发到 127.0.0.1:${PORT_JOB}
+  ${C_BOLD}Architecture:${C_RESET}
+    Browser → Next.js:${PORT_NEXT}
+              ├── /api/dependencies, /api/config, /api/folders, /api/jobs handled directly
+              ├── /api/proxy/preview, /api/proxy/jobs etc. forwarded to 127.0.0.1:${PORT_JOB}
+              └── /socket.io/* forwarded to 127.0.0.1:${PORT_JOB} via next.config.ts rewrites
 
-  ${C_BOLD}实时日志:${C_RESET}
+  ${C_BOLD}Live logs:${C_RESET}
     tail -f logs/next.log
     tail -f logs/job-runner.log
 
-  ${C_BOLD}停止服务:${C_RESET}
+  ${C_BOLD}Stop services:${C_RESET}
     bash stop.sh
 
-  ${C_BOLD}查看状态:${C_RESET}
+  ${C_BOLD}View status:${C_RESET}
     bash start.sh --status
 
 EOF
   else
-    title "⚠️  部分服务启动失败"
-    warn "请查看对应日志文件排查"
+    title "⚠️  Some services failed to start"
+    warn "Please check the corresponding log files for details"
     return 1
   fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 状态查看
+# Status view
 # ─────────────────────────────────────────────────────────────────────────────
 
 show_status() {
-  title "mfui 运行状态"
+  title "mfui running status"
 
-  printf "  %-15s %-8s %-10s %-30s\n" "服务" "端口" "状态" "PID"
+  printf "  %-15s %-8s %-10s %-30s\n" "Service" "Port" "Status" "PID"
   printf "  %-15s %-8s %-10s %-30s\n" "------------" "------" "--------" "----------"
 
   for pair in "Next.js:$PORT_NEXT:$PID_DIR/next.pid" \
@@ -470,56 +475,56 @@ show_status() {
     local status
 
     if [[ "$pid" != "-" ]] && is_pid_alive "$pid"; then
-      status="${C_GREEN}运行中${C_RESET}"
+      status="${C_GREEN}Running${C_RESET}"
     elif [[ -n "$(port_owner "$port")" ]]; then
       local owner=$(port_owner "$port")
       pid="${owner%%|*}"
-      status="${C_YELLOW}被其他进程占用${C_RESET}"
+      status="${C_YELLOW}Occupied by other process${C_RESET}"
     else
       pid="-"
-      status="${C_RED}未运行${C_RESET}"
+      status="${C_RED}Not running${C_RESET}"
     fi
 
     printf "  %-15s %-8s %-22s %-10s\n" "$name" "$port" "$(echo -e "$status")" "$pid"
   done
 
   echo ""
-  echo "  日志目录: $LOG_DIR"
+  echo "  Log directory: $LOG_DIR"
   echo ""
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 主流程
+# Main flow
 # ─────────────────────────────────────────────────────────────────────────────
 
 main() {
   echo ""
   echo "${C_BOLD}${C_CYAN}╔════════════════════════════════════════════════════════════╗${C_RESET}"
-  echo "${C_BOLD}${C_CYAN}║   mfui - 一键启动                                 ║${C_RESET}"
+  echo "${C_BOLD}${C_CYAN}║   mfui - One-click Start                            ║${C_RESET}"
   echo "${C_BOLD}${C_CYAN}╚════════════════════════════════════════════════════════════╝${C_RESET}"
 
-  # --status 模式
+  # --status mode
   if [[ "${1:-}" == "--status" ]]; then
     show_status
     return 0
   fi
 
-  # --prod 生产模式（Next 走 standalone 构建产物，无冷编译，适合手机/局域网日常使用）
+  # --prod production mode (Next uses standalone build, no cold compilation, suitable for daily/mobile/LAN use)
   if [[ "${1:-}" == "--prod" || "${1:-}" == "-p" ]]; then
     MF_MODE=production
-    info "生产模式：使用 .next/standalone 构建产物"
+    info "Production mode: using .next/standalone build"
     if [[ ! -f "$SCRIPT_DIR/.next/standalone/server.js" ]]; then
-      warn "构建产物不存在，先执行构建（npm run build）..."
-      (cd "$SCRIPT_DIR" && npm run build) || { err "构建失败"; return 1; }
+      warn "Build not found, running build first (npm run build)..."
+      (cd "$SCRIPT_DIR" && npm run build) || { err "Build failed"; return 1; }
     fi
   else
     MF_MODE=development
   fi
   export MF_MODE
 
-  # -f 强制重启模式
+  # -f force restart mode
   if [[ "${1:-}" == "-f" || "${1:-}" == "--force" ]]; then
-    info "强制重启模式：先停止旧实例"
+    info "Force restart mode: stopping old instances first"
     FORCE=true
     if [[ -f "$SCRIPT_DIR/stop.sh" ]]; then
       bash "$SCRIPT_DIR/stop.sh" --quiet || true
@@ -527,10 +532,10 @@ main() {
     fi
   fi
 
-  # 依赖检测
+  # Dependency check
   check_dependencies || return 1
 
-  # 启动
+  # Start
   start_all
 }
 

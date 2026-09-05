@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { deleteJobRow, getJob } from '../../_lib/jobs'
 import path from 'path'
 import fs from 'fs'
+import { getProjectRoot } from '@/lib/paths'
 
-const PROJECT_ROOT = process.cwd()
+const PROJECT_ROOT = getProjectRoot()
 
 export async function GET(
   _req: Request,

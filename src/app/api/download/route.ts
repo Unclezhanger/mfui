@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import { getProjectRoot } from '@/lib/paths'
 
 /**
  * GET /api/download
@@ -9,7 +10,7 @@ import path from 'path'
  * 避免浏览器尝试渲染二进制。
  */
 export async function GET() {
-  const filePath = path.join(process.cwd(), 'public', 'mfui.tar.gz')
+  const filePath = path.join(getProjectRoot(), 'public', 'mfui.tar.gz')
 
   if (!fs.existsSync(filePath)) {
     return new NextResponse('File not found', { status: 404 })

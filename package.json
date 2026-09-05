@@ -1,10 +1,10 @@
 {
   "name": "mfui",
-  "version": "4.4.1",
+  "version": "4.4.2",
   "private": true,
   "scripts": {
     "dev": "next dev -p ${MF_PORT_NEXT:-3010} 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "build": "npx prisma generate && next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && (grep -q DATABASE_URL .next/standalone/.env 2>/dev/null || echo 'DATABASE_URL=\"file:../db/custom.db\"' > .next/standalone/.env)",
     "start": "NODE_ENV=production node .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
     "db:push": "prisma db push --accept-data-loss",

@@ -2,8 +2,9 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import type { MfConfig } from '@/lib/types'
+import { getProjectRoot } from '@/lib/paths'
 
-const PROJECT_ROOT = process.cwd()
+const PROJECT_ROOT = getProjectRoot()
 const MF_DIR = path.join(PROJECT_ROOT, 'musicfeed')
 export const CONFIG_PATH = path.join(MF_DIR, 'mf_config.sh')
 

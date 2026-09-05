@@ -18,14 +18,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "mfui - YouTube Music Downloader",
   description:
-    "mfui v4.4.0（内核 musicfeed v3.5.0）— 把 YouTube Music 专辑/播放列表/单曲/MV 智能下载并归档到本地音乐库（带元数据、封面、ID3 标签）",
+    "mfui v4.4.2 (kernel musicfeed v3.5.1) — Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags",
   keywords: [
     "musicfeed",
     "YouTube Music",
     "yt-dlp",
-    "音乐下载",
+    "music downloader",
     "Navidrome",
-    "音乐库",
+    "music library",
   ],
   authors: [{ name: "Unclezhanger" }],
   manifest: "/manifest.webmanifest",
