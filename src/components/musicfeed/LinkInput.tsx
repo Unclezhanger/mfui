@@ -34,8 +34,7 @@ function parseUrls(text: string): string[] {
     const matches = line.match(/https?:\/\/[^\s)\]]+/g)
     if (matches?.length) {
       for (const raw of matches) {
-        const url = raw.trim().replace(/[>,.
-;]+$/g, '')
+        const url = raw.trim().replace(/[>,.;]+$/g, '')
         if (!seen.has(url)) {
           seen.add(url)
           urls.push(url)
