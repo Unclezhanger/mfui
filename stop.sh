@@ -156,7 +156,9 @@ main() {
   stop_service "Next.js"     "$PID_DIR/next.pid"         "${MF_PORT_NEXT:-3010}"
 
   title "All services stopped"
-  echo "  To restart: ${C_BOLD}bash start.sh${C_RESET}"
+  echo "  To restart:"
+  echo "    ${C_BOLD}bash start.sh --prod${C_RESET}  # Recommended: production mode — required for LAN/remote access"
+  echo "    ${C_BOLD}bash start.sh${C_RESET}         # Development mode — this machine (localhost) only"
   echo ""
 }
 

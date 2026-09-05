@@ -272,23 +272,41 @@ install_system_deps() {
       err "venv creation failed (missing python3-venv? try: sudo apt install python3-venv)"
       return 1
     fi
-    info "Installing yt-dlp + mutagen to venv..."
-    if "$MF_VENV_DIR/bin/pip" install --upgrade pip yt-dlp mutagen; then
-      ok "yt-dlp $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null) + mutagen installed in venv"
-    else
-      err "venv install failed, check network and re-run setup.sh"
-      return 1
-    fi
-
-    # yt-dlp nightly option (prevent YouTube anti-scrape)
-    echo ""
-    echo "    Note: YouTube frequently updates anti-scrape mechanisms. yt-dlp nightly updates more frequently and better avoids 403 errors."
-    if ask_yn "    Use yt-dlp nightly instead? (recommended if you encounter 403)" "n"; then
-      info "Installing nightly in venv..."
+    # yt-dlp nightly versions carry a 4th version segment (e.g. 2025.08.30.232815);
+    # stable releases are always YYYY.MM.DD. Used to keep the nightly channel on re-runs.
+    venv_ytdlp_ver="$("$MF_VENV_DIR/bin/yt-dlp" --version 2>/dev/null || true)"
+    if [[ "$venv_ytdlp_ver" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4,8}$ ]]; then
+      # Nightly already chosen on a previous run — always refresh to the latest nightly
+      # (pip would otherwise keep the stale nightly, since --upgrade only moves to the
+      # latest *stable* from PyPI, and the nightly ask below defaults to No).
+      info "yt-dlp nightly $venv_ytdlp_ver detected, updating to latest nightly..."
       if "$MF_VENV_DIR/bin/pip" install --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
-        ok "nightly installed in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
+        ok "nightly updated in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
       else
-        warn "nightly install failed, continuing with stable version"
+        warn "nightly update failed, keeping existing version $venv_ytdlp_ver"
+      fi
+      if "$MF_VENV_DIR/bin/pip" install --upgrade mutagen; then
+        ok "mutagen: $($MF_VENV_DIR/bin/python -c 'import mutagen; print(mutagen.version_string)' 2>/dev/null)"
+      fi
+    else
+      info "Installing yt-dlp + mutagen to venv..."
+      if "$MF_VENV_DIR/bin/pip" install --upgrade pip yt-dlp mutagen; then
+        ok "yt-dlp $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null) + mutagen installed in venv"
+      else
+        err "venv install failed, check network and re-run setup.sh"
+        return 1
+      fi
+
+      # yt-dlp nightly option (prevent YouTube anti-scrape)
+      echo ""
+      echo "    Note: YouTube frequently updates anti-scrape mechanisms. yt-dlp nightly updates more frequently and better avoids 403 errors."
+      if ask_yn "    Use yt-dlp nightly instead? (recommended if you encounter 403)" "n"; then
+        info "Installing nightly in venv..."
+        if "$MF_VENV_DIR/bin/pip" install --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
+          ok "nightly installed in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
+        else
+          warn "nightly install failed, continuing with stable version"
+        fi
       fi
     fi
   else
@@ -486,12 +504,22 @@ print_summary() {
   cat <<EOF
   When everything is ready, start the services:
 
-    ${C_BOLD}bash start.sh${C_RESET}     # Start all services (runs 2 services in background)
-    ${C_BOLD}bash stop.sh${C_RESET}      # Stop all services
+    ${C_BOLD}bash start.sh --prod${C_RESET}  # Recommended: production mode (standalone build)
+                                #   Works from LAN and remote devices (phone, other PCs).
+                                #   First run builds automatically, then starts instantly.
+    ${C_BOLD}bash start.sh${C_RESET}         # Development mode: only works on THIS machine
+                                #   (localhost). Other devices on the LAN will see a
+                                #   broken page — use --prod if you need LAN/remote access.
+    ${C_BOLD}bash stop.sh${C_RESET}          # Stop all services
 
-  After starting, access via browser:
+  After starting (production mode), access via browser:
 
-    ${C_BOLD}http://localhost:3010${C_RESET}
+    ${C_BOLD}http://localhost:3010${C_RESET}           (on this machine)
+    ${C_BOLD}http://<your-machine-ip>:3010${C_RESET}   (from other devices on the LAN)
+                              # Find the IP with: hostname -I | awk '{print \$1}'
+
+  Note: if other devices still cannot connect, make sure port 3010 is allowed
+  through your firewall (e.g. sudo ufw allow 3010).
 
   View real-time logs:
 

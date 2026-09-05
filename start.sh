@@ -411,6 +411,15 @@ start_all() {
 
   # Verify ports
   local all_ok=true
+  # Access hint differs by mode: dev binds localhost only, prod binds 0.0.0.0 (LAN/remote OK)
+  local access_hint
+  if [[ "$MF_MODE" == "production" ]]; then
+    access_hint="  ${C_BOLD}LAN / remote access:${C_RESET} http://<this-machine-ip>:${PORT_NEXT}
+  (production mode — reachable from other devices; find IP with: hostname -I)"
+  else
+    access_hint="  ${C_BOLD}Note:${C_RESET} development mode is reachable from THIS machine only.
+  For LAN/remote access from other devices, stop and run: ${C_BOLD}bash start.sh --prod${C_RESET}"
+  fi
   for pair in "Next.js:$PORT_NEXT" "Job Runner:$PORT_JOB"; do
     local name="${pair%%:*}" port="${pair##*:}"
     if [[ -n "$(port_owner "$port")" ]]; then
@@ -426,6 +435,8 @@ start_all() {
     cat <<EOF
 
   ${C_BOLD}Open in browser:${C_RESET}  ${C_GREEN}http://localhost:${PORT_NEXT}${C_RESET}
+
+${access_hint}
 
   ${C_BOLD}Ports in use:${C_RESET}
     Next.js      : $PORT_NEXT  (access this in browser)
