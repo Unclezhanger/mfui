@@ -524,9 +524,30 @@ main() {
   if [[ "${1:-}" == "--prod" || "${1:-}" == "-p" ]]; then
     MF_MODE=production
     info "Production mode: using .next/standalone build"
-    if [[ ! -f "$SCRIPT_DIR/.next/standalone/server.js" ]]; then
+    # Stale-build detection: after git pull, the standalone build predates the
+    # source and the old code would silently keep running — offer to rebuild.
+    if [[ -f "$SCRIPT_DIR/.next/standalone/server.js" ]]; then
+      local stale
+      stale=$(find "$SCRIPT_DIR/src" "$SCRIPT_DIR/package.json" "$SCRIPT_DIR/next.config.ts" \
+        -newer "$SCRIPT_DIR/.next/standalone/server.js" -print -quit 2>/dev/null)
+      if [[ -n "$stale" ]]; then
+        warn "Source is newer than the standalone build (e.g. after git pull): $(realpath --relative-to="$SCRIPT_DIR" "$stale" 2>/dev/null || echo "$stale")"
+        local reply="y"
+        [[ -t 0 ]] && { read -r -p "  Rebuild now? [Y/n] " reply; }
+        if [[ ! "$reply" =~ ^[Nn] ]]; then
+          (cd "$SCRIPT_DIR" && npm run build) || { err "Build failed"; return 1; }
+        else
+          warn "Skipped rebuild — the OLD build will be used"
+        fi
+      fi
+    else
       warn "Build not found, running build first (npm run build)..."
       (cd "$SCRIPT_DIR" && npm run build) || { err "Build failed"; return 1; }
+    fi
+    # Dependency staleness: package.json changed but node_modules not updated
+    if [[ "$SCRIPT_DIR/package.json" -nt "$SCRIPT_DIR/node_modules" ]]; then
+      warn "package.json is newer than node_modules (dependencies may be missing after an update)"
+      info "Run: npm install   (then restart)"
     fi
   else
     MF_MODE=development

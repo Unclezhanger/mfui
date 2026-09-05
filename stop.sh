@@ -159,6 +159,7 @@ main() {
   echo "  To restart:"
   echo "    ${C_BOLD}bash start.sh --prod${C_RESET}  # Recommended: production mode — required for LAN/remote access"
   echo "    ${C_BOLD}bash start.sh${C_RESET}         # Development mode — this machine (localhost) only"
+  echo "  After a git pull, --prod detects the stale build and offers to rebuild (dev mode needs no build)."
   echo ""
 }
 

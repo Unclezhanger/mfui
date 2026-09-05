@@ -521,6 +521,11 @@ print_summary() {
   Note: if other devices still cannot connect, make sure port 3010 is allowed
   through your firewall (e.g. sudo ufw allow 3010).
 
+  After updating the code (git pull), do NOT rely on the old build:
+
+    ${C_BOLD}bash start.sh --prod${C_RESET}  will detect the stale build and offer to rebuild
+    (or rebuild manually first: ${C_BOLD}npm install && npm run build${C_RESET})
+
   View real-time logs:
 
     tail -f logs/next.log logs/job-runner.log
