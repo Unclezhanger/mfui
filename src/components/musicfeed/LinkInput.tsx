@@ -185,7 +185,7 @@ export function LinkInput() {
                 variant="outline"
                 className="ml-auto border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               >
-                {preview.trackCount ?? 0} {t('首')}
+                {t('{n} 首', { n: preview.trackCount ?? 0 })}
               </Badge>
             </div>
 
