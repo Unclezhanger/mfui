@@ -84,7 +84,7 @@ the queue):
   <img src="docs/screenshots/mobile-dashboard.png" width="320" alt="Mobile dashboard">
 </p>
 
-The end result in **Navidrome** — one album (unified cover) plus three MV
+The end result in **Navidrome** — one album (unified cover) plus four MV
 singles (per-track covers), everything tagged:
 
 ![Navidrome result](docs/screenshots/navidrome-result.png)
@@ -237,10 +237,7 @@ config file):
 | Default artist folder | `MF_DEFAULT_ARTIST_DIR` | Pre-selected folder in the download form |
 | Audio format | `MF_AUDIO_FORMAT` | `opus` (smaller, recommended) or `m4a` (iOS/Apple) |
 | Hidden folders | `MF_HIDDEN_DIRS` | Folders hidden from the artist-folder list |
-| Kernel language | `MF_LANG` | Language of download job logs |
-
-The **interface language** (8 languages) is independent of `MF_LANG` and is
-stored in your browser.
+The **interface language** (8 languages) is stored in your browser.
 
 ## ❓ FAQ
 
@@ -259,8 +256,27 @@ downloads are owned by the user running `start.sh`.
 YouTube throttles anonymous downloads from datacenter IPs sometimes. mfui
 updates yt-dlp on every container start for a reason — make sure
 `MF_YTDLP_AUTOUPDATE` is not `0`, and re-run after a failure. For
-bare-metal users: `~/mfui-bare/.venv/bin/pip install -U yt-dlp` (or re-run
-`mf_setup.sh`).
+bare-metal users: `.venv/bin/pip install -U yt-dlp` from the project
+directory (or re-run `bash setup.sh` — it detects an existing nightly
+and refreshes it to the latest).
+
+**Optional: run the yt-dlp nightly build.** Nightly releases track YouTube
+changes more closely and can fix breakage days before the stable release.
+To switch (and to update it later, re-run the same command):
+
+```bash
+# Docker container
+docker exec -it mfui /app/.venv/bin/pip install --no-cache-dir --upgrade \
+  "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+
+# Bare metal (inside the project venv)
+.venv/bin/pip install --no-cache-dir --upgrade \
+  "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+```
+
+Note: the automatic startup update installs the **stable** release and will
+not undo your nightly — after switching, re-run the command above to refresh
+the nightly (or flip `MF_YTDLP_AUTOUPDATE=0` in docker-compose.yml).
 
 **The UI says a dependency is missing**
 Open the Dashboard — it lists exactly what's missing and the command to
@@ -289,7 +305,6 @@ All data (database, logs, config, venv) survives updates.
 
 English (default), 中文, Deutsch, Español, Français, 日本語,
 Português (Brasil), Русский — switch in **Settings → Interface language**.
-Job logs follow `MF_LANG` in `mf_config.sh`.
 
 ## ⚠️ Disclaimer
 
