@@ -24,7 +24,7 @@ export function DownloadProgress() {
     activeFrac,
     logs,
     cancelJob,
-    resetDownloadFlow,
+    startNewDownloadFlow,
     setTab,
     queueRun,
   } = useMusicFeedStore()
@@ -73,18 +73,19 @@ export function DownloadProgress() {
       {/* 顶部任务信息 */}
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center gap-3">
-            <CardTitle className="flex items-center gap-2 text-base">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <CardTitle className="flex min-w-0 flex-1 items-start gap-2 text-base">
               {isRunning && (
-                <Loader2 className="size-4 animate-spin text-emerald-600 dark:text-emerald-400" />
+                <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-emerald-600 dark:text-emerald-400" />
               )}
               {activeJob.status === 'completed' && (
-                <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
               )}
               {activeJob.status === 'cancelled' && (
-                <XCircle className="size-4 text-amber-500" />
+                <XCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
               )}
-              <span className="truncate">{activeJob.title ?? t('未命名任务')}</span>
+              {/* PWA 窄屏：长标题自动换行（不用左右滑动），图标保持首行对齐 */}
+              <span className="min-w-0 break-words">{activeJob.title ?? t('未命名任务')}</span>
             </CardTitle>
             <StatusBadge status={activeJob.status} className="ml-auto" />
             {isRunning && (
@@ -97,7 +98,7 @@ export function DownloadProgress() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-mono">{activeJob.url}</span>
+            <span className="break-all font-mono">{activeJob.url}</span>
             <span>·</span>
             <span>📁 {activeJob.artistDir}</span>
             {activeJob.subfolder && activeJob.subfolder !== 'none' && (
@@ -160,7 +161,7 @@ export function DownloadProgress() {
           {t('返回仪表盘')}
         </Button>
         {isCompleted && (
-          <Button variant="outline" onClick={resetDownloadFlow}>
+          <Button variant="outline" onClick={startNewDownloadFlow}>
             <Music className="size-4" />
             {t('再下载一个')}
           </Button>

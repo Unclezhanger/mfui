@@ -7,7 +7,6 @@ import {
   Download,
   History,
   Settings,
-  Music,
   Sun,
   Moon,
   Github,
@@ -53,7 +52,26 @@ export function Sidebar() {
         <img src="/logo.png" alt="mfui logo" className="size-9 rounded-lg shadow-sm" />
         <div className="flex flex-col">
           <span className="font-semibold leading-tight">mfui</span>
-          <span className="text-[10px] text-muted-foreground">v4.4.2 · {t('内核')} v3.5.1</span>
+          <span className="text-[10px] text-muted-foreground">
+            {/* 版本号即仓库入口：WebUI 版本 → mfui 仓库，内核版本 → musicfeed 仓库 */}
+            <a
+              href="https://github.com/Unclezhanger/mfui"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-foreground hover:underline"
+            >
+              v4.4.2
+            </a>
+            {' · '}
+            <a
+              href="https://github.com/Unclezhanger/musicfeed"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-foreground hover:underline"
+            >
+              {t('内核')} v3.5.1
+            </a>
+          </span>
         </div>
         <Badge
           variant="outline"
@@ -100,23 +118,29 @@ export function Sidebar() {
             <Moon className="size-4" />
           )}
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t('GitHub 仓库')}
-          asChild
-          className="text-muted-foreground hover:text-foreground"
+        {/* 双仓库入口：GitHub 图标 + 产品名，点击跳转对应仓库（版权标移至主页面页脚） */}
+        <a
+          href="https://github.com/Unclezhanger/mfui"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="mfui GitHub"
+          className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
-          <a
-            href="https://github.com/Unclezhanger/musicfeed"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Github className="size-4" />
-          </a>
-        </Button>
+          <Github className="size-3.5" />
+          mfui
+        </a>
+        <a
+          href="https://github.com/Unclezhanger/musicfeed"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="musicfeed GitHub"
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Github className="size-3.5" />
+          musicfeed
+        </a>
         <span className="ml-auto text-[10px] text-muted-foreground">
-          © Unclezhanger
+          {/* 版权标已移至主内容区页脚右下角 */}
         </span>
       </div>
     </aside>
@@ -139,10 +163,13 @@ export function MobileTabBar() {
   }, [])
 
   return (
-    <div className="flex items-center gap-1 border-b border-border bg-sidebar px-2 py-2 md:hidden">
-      <div className="flex size-7 items-center justify-center rounded-md bg-emerald-600 text-emerald-50">
-        <Music className="size-4" />
-      </div>
+    <div className="flex items-center gap-1.5 border-b border-border bg-sidebar px-2 py-2 md:hidden">
+      {/* 项目 logo（替代绿色音符图标），iOS 风格圆角 */}
+      <img
+        src="/logo.png"
+        alt="mfui logo"
+        className="size-9 shrink-0 rounded-xl shadow-sm"
+      />
       <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
         {navItems.map(({ key, label, Icon }) => {
           const active = currentTab === key

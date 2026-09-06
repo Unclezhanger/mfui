@@ -128,6 +128,15 @@ export async function fetchFolders(): Promise<{ exists: boolean; folders: string
   return (await res.json()) as { exists: boolean; folders: string[] }
 }
 
+/** 目录树浏览（设置页音乐根目录选取器）：列出指定目录的子目录 */
+export async function browseDirs(
+  dir: string,
+): Promise<{ ok: boolean; dirs: string[]; parent: string | null; path: string }> {
+  const res = await fetch(`/api/browse?path=${encodeURIComponent(dir)}`)
+  if (!res.ok) throw new Error(`browseDirs: ${res.status}`)
+  return (await res.json()) as { ok: boolean; dirs: string[]; parent: string | null; path: string }
+}
+
 export async function fetchJobs(): Promise<Job[]> {
   const res = await fetchWithRetry('/api/jobs')
   if (!res.ok) throw new Error(`fetchJobs: ${res.status}`)

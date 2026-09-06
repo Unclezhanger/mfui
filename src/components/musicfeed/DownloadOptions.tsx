@@ -123,8 +123,11 @@ export function DownloadOptions() {
         await useMusicFeedStore.getState().advanceDownloadQueue()
         toast.success(t('已进入下一个链接的配置'))
       } else {
-        await startQueuedDownloads()
+        // 不等整个队列跑完才提示（await 到终态才 toast 会变成"完成后才弹
+        // Download started"）：任务创建即提示，错误由后续 catch 弹出
+        const run = startQueuedDownloads()
         toast.success(t('已开始下载任务'))
+        await run
       }
     } catch (e) {
       toast.error(t('启动失败：{m}', { m: e instanceof Error ? e.message : String(e) }))
@@ -139,8 +142,9 @@ export function DownloadOptions() {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-3">
+      {/* flex+stretch 覆盖默认 grid/items-start：原布局按 max-content 取宽，窄屏会把头部撑出卡片 */}
+      <CardHeader className="flex flex-col items-stretch gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             size="sm"
@@ -151,20 +155,24 @@ export function DownloadOptions() {
             {t('编辑曲目')}
           </Button>
           <CardTitle className="text-base">{t('配置下载选项')}</CardTitle>
-          <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2 pl-4 text-sm text-muted-foreground">
-            <LinkTypeBadge type={preview.type} />
-            {/* v4.3: 标题+歌手占满中间区域，长名截断并悬浮显示全名 */}
+          {/* PWA 窄屏：标题区换行显示（basis-full 独占一行），不再横向溢出；
+              计数放 LinkType 徽章下方（左侧），避免挤压标题 */}
+          <div className="ml-auto flex min-w-0 flex-1 basis-full items-center justify-between gap-2 text-sm text-muted-foreground sm:basis-auto sm:pl-4">
+            <span className="flex shrink-0 flex-col items-start gap-1.5">
+              <LinkTypeBadge type={preview.type} />
+              <span className="text-xs">{t('已选 {n} 首', { n: selectedTracks.length })}</span>
+            </span>
             <span className="flex min-w-0 flex-1 flex-col items-end leading-tight">
-              <span className="max-w-full truncate font-medium text-foreground" title={preview.albumName ?? ''}>
+              {/* 标题/歌手单行显示，超长可在行内横向滑动读取全名（title 悬浮兜底） */}
+              <span className="thin-scroll block max-w-full overflow-x-auto whitespace-nowrap text-right font-medium text-foreground" title={preview.albumName ?? ''}>
                 {preview.albumName ?? t('未命名')}
               </span>
               {preview.artist && (
-                <span className="max-w-full truncate text-xs" title={preview.artist}>
+                <span className="thin-scroll block max-w-full overflow-x-auto whitespace-nowrap text-xs" title={preview.artist}>
                   {preview.artist}
                 </span>
               )}
             </span>
-            <span className="shrink-0">{t('已选 {n} 首', { n: selectedTracks.length })}</span>
           </div>
         </div>
       </CardHeader>

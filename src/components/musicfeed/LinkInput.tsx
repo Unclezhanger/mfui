@@ -226,7 +226,10 @@ export function LinkInput() {
                         <span className="w-6 shrink-0 text-xs text-muted-foreground tabular-nums">
                           {tr.idx}
                         </span>
-                        <span className="min-w-0 flex-1 truncate">{tr.title}</span>
+                        {/* 超长曲名：行内横向滚动读取全名，不影响 checkbox/徽章 */}
+                        <span className="thin-scroll min-w-0 flex-1 overflow-x-auto">
+                          <span className="whitespace-nowrap">{tr.title}</span>
+                        </span>
                         {tr.hasMeta ? (
                           <Badge
                             variant="outline"

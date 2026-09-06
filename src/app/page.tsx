@@ -71,18 +71,8 @@ export default function Home() {
         {/* Sticky Footer */}
         <footer className="mt-auto border-t border-border bg-background/80 px-4 py-3 backdrop-blur-sm md:px-6">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>
-              🎵 mfui v4.4.0 ·{' '}
-              <a
-                href="https://github.com/Unclezhanger/mfui"
-                target="_blank"
-                rel="noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                GitHub
-              </a>
-            </span>
             <span>Powered by yt-dlp · ffmpeg · python3+mutagen</span>
+            <span>© Unclezhanger</span>
           </div>
         </footer>
       </div>

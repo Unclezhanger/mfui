@@ -241,9 +241,12 @@ interface MusicFeedState {
 
   // config
   config: MfConfig
+  /** 页面初始化时从 mf_config.sh 读到的原始值（「恢复默认」回滚到这份快照） */
+  configSnapshot: MfConfig
   setConfig: (cfg: Partial<MfConfig>) => void
   resetConfig: () => void
   saveConfig: () => Promise<void>
+  refreshFolders: () => Promise<void>
 
   // 表单
   form: DownloadFormState
@@ -282,6 +285,13 @@ interface MusicFeedState {
   startDownload: (baseOffset?: number, grandTotal?: number, logId?: string) => Promise<void>
   cancelJob: () => Promise<void>
   resetDownloadFlow: () => void
+  /**
+   * Dashboard「开始新下载」/ 下载完成后「Start another download」的统一入口：
+   * - 当前任务运行中/排队中 → 保留现指向（跳回下载页当前步骤：输入/配置/进度）
+   * - 任务已终态或空闲 → 重置向导回链接输入框（等同 download another），
+   *   并刷新 folders 缓存（上一个下载刚创建的歌手文件夹立即可见）
+   */
+  startNewDownloadFlow: () => void
   appendLog: (entry: LogEntry) => void
   setProgress: (downloadedCount: number) => void
 
@@ -328,6 +338,7 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
     set((s) => ({
       dependencies: deps,
       config: cfg,
+      configSnapshot: cfg,
       folders: foldersRes.folders,
       baseDirExists: foldersRes.exists,
       jobs,
@@ -366,8 +377,19 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
   },
 
   config: { ...emptyConfig },
+  configSnapshot: { ...emptyConfig },
   setConfig: (cfg) => set((s) => ({ config: { ...s.config, ...cfg } })),
-  resetConfig: () => set({ config: { ...emptyConfig } }),
+  // 「恢复默认」= 回滚到页面初始化时 mf_config.sh 的原始快照（而非硬编码默认值），
+  // 仍需点保存才会写入
+  resetConfig: () => set((s) => ({ config: { ...s.configSnapshot } })),
+  refreshFolders: async () => {
+    try {
+      const r = await api.fetchFolders()
+      set({ folders: r.folders, baseDirExists: r.exists })
+    } catch (e) {
+      console.error('[refreshFolders] failed:', e)
+    }
+  },
   saveConfig: async () => {
     const cfg = get().config
     try {
@@ -588,6 +610,22 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
         artistDir: get().config.MF_DEFAULT_ARTIST_DIR || 'musicfeed',
       },
     })
+    // 刷新 folders 缓存：上一个下载可能刚创建了新的歌手文件夹
+    void get().refreshFolders()
+  },
+
+  startNewDownloadFlow: () => {
+    const s = get()
+    const jobRunning =
+      s.activeJob && (s.activeJob.status === 'running' || s.activeJob.status === 'pending')
+    if (jobRunning) {
+      // 下载未完成：保留现指向，跳回下载页当前步骤（输入/配置/进度）
+      set({ currentTab: 'download' })
+    } else {
+      // 已完成/空闲/未开始草稿：重置回链接输入框（等同 download another）
+      get().resetDownloadFlow()
+      set({ currentTab: 'download' })
+    }
   },
 
   queueRun: null,

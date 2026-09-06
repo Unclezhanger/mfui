@@ -44,7 +44,7 @@ function fmtRelative(ts: string, t: (s: string, p?: Record<string, string | numb
 }
 
 export function Dashboard() {
-  const { dependencies, config, jobs, setTab, uiLang } = useMusicFeedStore()
+  const { dependencies, config, jobs, uiLang, startNewDownloadFlow } = useMusicFeedStore()
   const t = useT()
 
   const missingRequired = (Object.keys(dependencies) as Array<keyof typeof dependencies>).filter(
@@ -207,7 +207,7 @@ export function Dashboard() {
               whileTap={{ scale: 0.95 }}
               transition={{ duration: 0.4 }}
               aria-label={t('新建下载任务')}
-              onClick={() => setTab('download')}
+              onClick={() => startNewDownloadFlow()}
               className="flex size-16 cursor-pointer items-center justify-center rounded-full bg-emerald-600/15 text-emerald-600 transition-colors hover:bg-emerald-600/25 dark:text-emerald-400"
             >
               <Plus className="size-8" />
@@ -221,10 +221,10 @@ export function Dashboard() {
             <Button
               size="lg"
               className="bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
-              onClick={() => setTab('download')}
+              onClick={() => startNewDownloadFlow()}
             >
               <Download className="size-4" />
-              {t('开始下载')}
+              {t('开始新下载')}
             </Button>
           </CardContent>
           <div className="pointer-events-none absolute -right-8 -top-8 size-32 rounded-full bg-emerald-500/10 blur-2xl" />
