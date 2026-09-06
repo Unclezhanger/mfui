@@ -364,7 +364,9 @@ PYEOF
 # 输出: album | ytm_radio | playlist | single | unknown
 get_link_type() {
     local url="$1"
-    [[ "$url" =~ OLAK5uy_ ]] && { echo "album"; return; }
+    # OLAK5uy_ = YTM 分享链接；MPREb_ = YTM 专辑/发行 browse 链接
+    # （从 music.youtube.com 地址栏直接复制，与 OLAK5uy 指向同一专辑实体）
+    [[ "$url" =~ OLAK5uy_ ]] || [[ "$url" =~ MPREb_ ]] && { echo "album"; return; }
     [[ "$url" =~ RDCLAK5uy_ ]] && { echo "ytm_radio"; return; }
     if [[ "$url" =~ playlist\?list=PL ]] || [[ "$url" =~ playlist\?list=LM ]]; then echo "playlist"; return; fi
     [[ "$url" =~ youtube\.com/playlist ]] && { echo "playlist"; return; }

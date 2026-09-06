@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────
-# musicfeed V3.5.1
+# musicfeed V3.5.2
 # ─────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/mf_lib.sh"
 
 echo "=================================================="
-echo " 🎵 musicfeed V3.5.1"
+echo " 🎵 musicfeed V3.5.2"
 echo "=================================================="
 say "支持: 专辑 / 播放列表 / YTM电台 / 单曲" "Supports: albums / playlists / YTM radios / singles"
 echo "=================================================="
