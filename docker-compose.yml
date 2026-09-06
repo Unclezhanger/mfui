@@ -7,11 +7,6 @@ services:
     # build: .
     container_name: mfui
     restart: unless-stopped
-    # Run as a non-root user so downloaded files match the host user's
-    # ownership (Navidrome/music-tag-web can then manage them freely).
-    # Defaults to 1000:1000 — set MFUI_UID / MFUI_GID in a .env file next to
-    # this compose file to match your user (check with: id -u / id -g).
-    user: "${MFUI_UID:-1000}:${MFUI_GID:-1000}"
     ports:
       # Host port 3011 to avoid clashing with a bare-metal mfui install
       # (setup.sh/start.sh) that uses 3010. The port inside the container
@@ -22,20 +17,27 @@ services:
       MF_YTDLP_AUTOUPDATE: "1"
       # Timezone (affects log timestamps and 'today's downloads' statistics)
       TZ: Asia/Shanghai
-      # Safe writable HOME for npx/pip caches when running as a custom UID
-      HOME: /tmp
+      # UID/GID the download services run as (defaults 1000:1000).
+      # Downloaded files in the music library are owned by this user, so
+      # Navidrome / music-tag-web / your own user can manage them freely.
+      # The entrypoint starts as root only to prepare volumes/config, then
+      # drops to this UID via gosu.
+      MFUI_UID: "1000"
+      MFUI_GID: "1000"
     # Optional: custom DNS inside container (e.g., your LAN ad-filtering DNS)
     # dns:
     #   - 192.168.1.1
     volumes:
       # Music library (must change: your Navidrome/Jellyfin music directory)
       - /path/to/your/music:/music
-      # Database / logs / config / yt-dlp venv persistence.
-      # Bind-mounted host directories (not named volumes) so everything stays
-      # owned by the user above — create them before first start:
-      #   mkdir -p ./data/db ./data/log ./data/config ./data/venv
-      #   chown -R $MFUI_UID:$MFUI_GID ./data
-      - ./data/db:/app/db
-      - ./data/log:/app/musicfeed/log
-      - ./data/config:/config
-      - ./data/venv:/app/.venv
+      # Database / logs / config / yt-dlp venv persistence
+      - mfui-db:/app/db
+      - mfui-log:/app/musicfeed/log
+      - mfui-config:/config
+      - mfui-venv:/app/.venv
+
+volumes:
+  mfui-db:
+  mfui-log:
+  mfui-config:
+  mfui-venv:
