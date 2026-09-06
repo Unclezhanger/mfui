@@ -40,3 +40,4 @@ dev.pid
 musicfeed/mf_config.sh
 musicfeed/log/
 dist/
+next-env.d.ts
