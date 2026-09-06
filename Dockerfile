@@ -67,7 +67,7 @@ RUN mkdir -p db musicfeed/log \
     && echo 'DATABASE_URL="file:../db/custom.db"' > .env
 
 # mf_config.sh：镜像内置一份默认配置，运行期由 /config 卷持久化（见 entrypoint）
-RUN printf 'MF_BASE_DIR="/music"\nMF_DEFAULT_ARTIST_DIR="musicfeed"\nMF_AUDIO_FORMAT="opus"\nMF_LANG="en"\nMF_HIDDEN_DIRS=(attachments "@eaDir" ".DS_Store")\n' > musicfeed/mf_config.sh
+RUN printf 'MF_BASE_DIR="/music"\nMF_DEFAULT_ARTIST_DIR="musicfeed"\nMF_AUDIO_FORMAT="opus"\nMF_LANG="en"\nMF_HIDDEN_DIRS=()\n' > musicfeed/mf_config.sh
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
