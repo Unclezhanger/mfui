@@ -377,8 +377,10 @@ run_safe_steps() {
       ok ".env file created from template"
     else
       # Fallback: create minimal .env
+      # NOTE: SQLite relative paths resolve against prisma/ (schema.prisma dir),
+      # so "../db/custom.db" = <project root>/db/custom.db
       cat > "$SCRIPT_DIR/.env" <<'ENVFILE'
-DATABASE_URL="file:./db/custom.db"
+DATABASE_URL="file:../db/custom.db"
 ENVFILE
       ok ".env file created with default DATABASE_URL"
     fi
