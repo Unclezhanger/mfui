@@ -66,7 +66,20 @@ stop_service() {
         ok "$name: not running"
       fi
     else
-      ok "$name: not running"
+      # macOS has no ss — fall back to lsof (same as start.sh port_owner)
+      if command -v lsof &>/dev/null; then
+        local port_pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
+        if [[ -n "$port_pid" ]]; then
+          warn "$name: pid file missing, but port $port is held by PID $port_pid"
+          if ask_kill "$name" "$port_pid"; then
+            do_kill "$port_pid" "$name"
+          fi
+        else
+          ok "$name: not running"
+        fi
+      else
+        ok "$name: not running"
+      fi
     fi
     return 0
   fi

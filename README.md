@@ -301,6 +301,17 @@ cd mfui && git pull && bash start.sh --prod   # offers to rebuild
 
 All data (database, logs, config, venv) survives updates.
 
+**Does bare metal work on macOS?**
+Yes. `start.sh`/`stop.sh` detect that macOS has no `setsid` and emulate it
+automatically (via perl), so process management behaves exactly as on Linux.
+Two macOS specifics:
+
+- **macOS 11 (Big Sur) or older:** the `esbuild` binary bundled with `tsx`
+  4.x is built for macOS 12+ and fails with a dyld error. `setup.sh` detects
+  this and installs the job-runner dependencies with `tsx@3.14.0` pinned.
+- **Finding your LAN IP:** use `ipconfig getifaddr en0` (Linux's
+  `hostname -I` doesn't exist on macOS).
+
 ## 🌍 Languages
 
 English (default), 中文, Deutsch, Español, Français, 日本語,

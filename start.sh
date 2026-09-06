@@ -284,12 +284,23 @@ start_service() {
     fi
   fi
 
-  # Start - use setsid to create a new process group, so stop.sh can kill the entire process tree
+  # Start - launch in a new session so stop.sh can kill the entire process tree
   info "Starting $name (port $port) ..."
   (
     cd "$cwd"
-    # setsid makes the child process a new session leader, PID = process group PGID
-    setsid bash -c "$cmd" >> "$logfile" 2>&1 &
+    # setsid makes the child a new session leader (PID = process group PGID).
+    # macOS has no setsid(1) — emulate it with perl's POSIX setsid() to keep
+    # the same PID==PGID invariant stop.sh relies on for group kills.
+    if command -v setsid &>/dev/null; then
+      setsid bash -c "$cmd" >> "$logfile" 2>&1 &
+    elif command -v perl &>/dev/null; then
+      perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec failed: $!\n"' \
+        bash -c "$cmd" >> "$logfile" 2>&1 &
+    else
+      # Last resort without session isolation: stop.sh can only kill the
+      # leader PID, leftover children may need manual cleanup.
+      nohup bash -c "$cmd" >> "$logfile" 2>&1 &
+    fi
     echo $! > "$pidfile"
   )
   sleep 1
@@ -414,8 +425,13 @@ start_all() {
   # Access hint differs by mode: dev binds localhost only, prod binds 0.0.0.0 (LAN/remote OK)
   local access_hint
   if [[ "$MF_MODE" == "production" ]]; then
+    # hostname -I is Linux-only; macOS uses ipconfig getifaddr
+    local ip_hint="hostname -I"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      ip_hint="ipconfig getifaddr en0"
+    fi
     access_hint="  ${C_BOLD}LAN / remote access:${C_RESET} http://<this-machine-ip>:${PORT_NEXT}
-  (production mode — reachable from other devices; find IP with: hostname -I)"
+  (production mode — reachable from other devices; find IP with: ${ip_hint})"
   else
     access_hint="  ${C_BOLD}Note:${C_RESET} development mode is reachable from THIS machine only.
   For LAN/remote access from other devices, stop and run: ${C_BOLD}bash start.sh --prod${C_RESET}"

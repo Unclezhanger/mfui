@@ -437,12 +437,27 @@ ENVFILE
 
   if $do_mini_deps; then
     echo ""
-    info "Executing: npm install (mini-services/job-runner)"
-    if (cd mini-services/job-runner && npm install); then
-      ok "Mini-service dependencies installed"
+    # macOS < 12: esbuild binaries shipped with tsx 4.x are built for macOS 12+
+    # (they need Security.framework _SecTrustCopyCertificateChain) and fail to
+    # load with dyld errors. Pin tsx 3.14.0 there; Linux and macOS 12+ keep the
+    # stock dependency set untouched.
+    if [[ "$(uname -s)" == "Darwin" ]] && [[ "$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)" -lt 12 ]]; then
+      info "macOS < 12 detected: installing job-runner deps with tsx pinned to 3.14.0"
+      info "(esbuild in tsx 4.x requires macOS 12+; package.json is adapted locally)"
+      if (cd mini-services/job-runner && npm install -D tsx@3.14.0); then
+        ok "Mini-service dependencies installed (tsx 3.14.0 for macOS compatibility)"
+      else
+        err "Mini-service dependency install failed"
+        return 1
+      fi
     else
-      err "Mini-service dependency install failed"
-      return 1
+      info "Executing: npm install (mini-services/job-runner)"
+      if (cd mini-services/job-runner && npm install); then
+        ok "Mini-service dependencies installed"
+      else
+        err "Mini-service dependency install failed"
+        return 1
+      fi
     fi
   fi
 
@@ -503,6 +518,12 @@ check_musicfeed_config() {
 print_summary() {
   title "Next Steps"
 
+  # hostname -I is Linux-only; macOS uses ipconfig getifaddr
+  local ip_hint="hostname -I | awk '{print \$1}'"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    ip_hint="ipconfig getifaddr en0"
+  fi
+
   cat <<EOF
   When everything is ready, start the services:
 
@@ -518,7 +539,7 @@ print_summary() {
 
     ${C_BOLD}http://localhost:3010${C_RESET}           (on this machine)
     ${C_BOLD}http://<your-machine-ip>:3010${C_RESET}   (from other devices on the LAN)
-                              # Find the IP with: hostname -I | awk '{print \$1}'
+                              # Find the IP with: ${ip_hint}
 
   Note: if other devices still cannot connect, make sure port 3010 is allowed
   through your firewall (e.g. sudo ufw allow 3010).
