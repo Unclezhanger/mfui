@@ -38,8 +38,15 @@ else
     echo "[entrypoint] seeded /config/mf_config.sh (defaults)"
 fi
 # $MF_DIR/mf_config.sh 指向 /config：Web UI 保存配置（非 root）写入
-# 该符号链接即落在 /config 卷；内核脚本按原路径读取，行为不变
+# 该符号链接即落在 /config 卷；内核脚本按原路径读取，行为不变。
+# standalone 快照目录里还有一份副本（API 的 getProjectRoot 会写到那里），
+# 同样符号链接到 /config，保证内核与 API 读写同一份配置。
 ln -sf /config/mf_config.sh "$MF_DIR/mf_config.sh"
+STANDALONE_MF="$APP/.next/standalone/musicfeed"
+if [ -d "$STANDALONE_MF" ]; then
+    ln -sf /config/mf_config.sh "$STANDALONE_MF/mf_config.sh"
+    chown -R "$RUN_UID:$RUN_GID" "$STANDALONE_MF"
+fi
 
 mkdir -p "$APP/db" "$MF_DIR/log"
 
