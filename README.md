@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Unclezhanger/mfui/releases"><img src="https://img.shields.io/badge/release-v4.4.3-success.svg" alt="Release v4.4.3"></a>
+  <a href="https://github.com/Unclezhanger/mfui/releases"><img src="https://img.shields.io/badge/release-v4.4.4-success.svg" alt="Release v4.4.4"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <a href="https://github.com/Unclezhanger/musicfeed"><img src="https://img.shields.io/badge/kernel-musicfeed%20v3.5.2-orange.svg" alt="kernel"></a>
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20NAS%20%7C%20Docker-lightgrey.svg" alt="platform">

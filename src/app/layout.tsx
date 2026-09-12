@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "mfui - YouTube Music Downloader",
   description:
-    "mfui v4.4.3 (kernel musicfeed v3.5.2) — Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags",
+    "mfui v4.4.4 (kernel musicfeed v3.5.2) — Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags",
   keywords: [
     "musicfeed",
     "YouTube Music",

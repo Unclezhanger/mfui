@@ -25,12 +25,21 @@ COPY . .
 # job-runner 有独立 package.json（tsx 等），单独安装；
 # 删除其自带 @prisma/client/.prisma，让它向上解析到根目录已 generate 的 client
 # （避免双层 prisma 生成引擎版本错乱）
+# 体积优化：build 之后 npm prune --omit=dev，砍掉 eslint/typescript/tailwindcss
+# 等纯构建期依赖，运行时用不到。prisma 在 package.json 里属于 dependencies，
+# prune 不会动它，entrypoint 里的 `npx prisma generate/db push` 自愈逻辑不受影响。
+# 另外用 du -sh 实测验证过：.next/standalone/node_modules 是 Next.js standalone
+# 构建自带的运行时依赖精简集（132M，已含 next/@next），根目录 node_modules 里的
+# next/@next/@swc/typescript 完全是重复——entrypoint 只会在 $APP 根目录跑
+# `npx prisma generate/db push`，不会读这几个包，删掉安全。
 RUN cd mini-services/job-runner \
     && npm ci --no-audit --no-fund \
     && rm -rf node_modules/@prisma/client node_modules/.prisma \
     && cd /app \
     && npx prisma generate \
-    && npm run build
+    && npm run build \
+    && npm prune --omit=dev --no-audit --no-fund \
+    && rm -rf node_modules/next node_modules/@next node_modules/@swc node_modules/typescript
 # prepare_standalone 等价操作：删掉构建快照，换成指向源目录的符号链接
 # （与 start.sh 保持一致，防止 API 读到构建时刻的旧 db/musicfeed 数据）
 RUN cd .next/standalone \
@@ -44,7 +53,7 @@ FROM node:20-bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg python3 python3-venv python3-pip ca-certificates curl tini gosu \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/apt/*
 
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -54,10 +63,11 @@ ENV NODE_ENV=production \
     MF_YTDLP_AUTOUPDATE=1
 
 # Next standalone（含 static，构建期已复制）+ 运行期依赖（tsx/prisma client/socket.io）
+# 体积优化：mini-services 整个目录本身就包含 job-runner/node_modules（builder 阶段
+# npm ci 装的），之前又单独多复制了一次同样的内容，是纯重复层，现已去掉。
 COPY --from=builder /app/.next/standalone ./.next/standalone
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/mini-services ./mini-services
-COPY --from=builder /app/mini-services/job-runner/node_modules ./mini-services/job-runner/node_modules
 COPY --from=builder /app/musicfeed ./musicfeed
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
