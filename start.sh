@@ -72,19 +72,18 @@ PORT_JOB="${MF_PORT_JOB:-3001}"
 # Here we explicitly export a complete PATH with all common install paths.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Project Python virtual environment (yt-dlp / mutagen are installed here, isolated from system)
-# When venv exists:
-#   - .venv/bin is placed at the front of PATH (yt-dlp, python3+mutagen from venv take priority)
-#   - explicitly export MF_YTDLP pointing to yt-dlp inside venv (mf_lib.sh reads this)
-MF_VENV_DIR="$SCRIPT_DIR/.venv"
-if [[ -x "$MF_VENV_DIR/bin/yt-dlp" ]]; then
-  export MF_YTDLP="$MF_VENV_DIR/bin/yt-dlp"
-  info "Using project venv yt-dlp: $MF_YTDLP"
+# musicfeed v4.1：yt-dlp 为项目内独立官方二进制（setup.sh 下载到 musicfeed/bin/），
+# 不再有 python venv / mutagen。
+MF_BIN_DIR="$SCRIPT_DIR/musicfeed/bin"
+if [[ -x "$MF_BIN_DIR/yt-dlp" ]]; then
+  export MF_YTDLP="$MF_BIN_DIR/yt-dlp"
+  info "Using project yt-dlp: $MF_YTDLP"
 fi
 
 # Collect all possible bin paths, deduplicate and assemble a complete PATH
 PATH_DIRS=(
-  "$MF_VENV_DIR/bin"             # Project Python venv (highest priority)
+  "$MF_BIN_DIR"                  # musicfeed project yt-dlp/ffmpeg/jq binaries (highest priority)
+  "$SCRIPT_DIR/tools/bin"        # project-local node/npm/npx (if installed by setup.sh)
   "/usr/local/bin"
   "/usr/bin"
   "/bin"
@@ -95,7 +94,6 @@ PATH_DIRS=(
   "$HOME/.npm-global/bin"        # npm -g installed commands
   "$HOME/.nvm/versions/current/bin"  # node installed via nvm (if symlinked)
   "$HOME/.cargo/bin"             # rust cargo installed commands
-  "$HOME/.venv/bin"              # User-level Python venv
 )
 NEW_PATH=""
 for d in "${PATH_DIRS[@]}"; do
@@ -125,18 +123,13 @@ check_dependencies() {
 
   command -v node &>/dev/null || missing+=("node (>=20)")
   command -v ffmpeg &>/dev/null || missing+=("ffmpeg")
-  command -v python3 &>/dev/null || missing+=("python3")
+  command -v jq &>/dev/null || missing+=("jq (v4.1 kernel JSON parsing)")
   command -v curl &>/dev/null || missing+=("curl (needed for cover art download)")
-  # yt-dlp / mutagen: prefer project venv, fall back to system install
+  # yt-dlp：项目内独立二进制优先，回退系统 PATH
   if [[ -n "${MF_YTDLP:-}" ]]; then
-    "$MF_YTDLP" --version &>/dev/null || missing+=("yt-dlp in venv")
+    "$MF_YTDLP" --version &>/dev/null || missing+=("yt-dlp at $MF_YTDLP")
   else
-    command -v yt-dlp &>/dev/null || missing+=("yt-dlp (or run setup.sh to create venv)")
-  fi
-  if [[ -x "$MF_VENV_DIR/bin/python3" ]]; then
-    "$MF_VENV_DIR/bin/python3" -c "import mutagen" 2>/dev/null || missing+=("mutagen in venv")
-  else
-    python3 -c "import mutagen" 2>/dev/null || missing+=("mutagen")
+    command -v yt-dlp &>/dev/null || missing+=("yt-dlp (run setup.sh to download)")
   fi
 
   if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
@@ -160,6 +153,30 @@ check_dependencies() {
   fi
   ok "All dependencies ready"
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# yt-dlp 频道自动检测（stable/nightly，MF_YTDLP_CHANNEL 配置；有新版才下载）
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -x "$MF_BIN_DIR/yt-dlp" ]]; then
+  YTDLP_CHANNEL=$(grep '^MF_YTDLP_CHANNEL=' "$SCRIPT_DIR/musicfeed/mf_config.sh" 2>/dev/null | sed -E 's/.*"([^"]*)".*/\1/')
+  YTDLP_CHANNEL=${YTDLP_CHANNEL:-stable}
+  YTDLP_REPO="yt-dlp/yt-dlp"
+  [[ "$YTDLP_CHANNEL" == "nightly" ]] && YTDLP_REPO="yt-dlp/yt-dlp-nightly-builds"
+  YTDLP_LATEST=$(curl -fsSL --max-time 8 "https://api.github.com/repos/$YTDLP_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)
+  YTDLP_INSTALLED=""
+  [[ -f "$MF_BIN_DIR/yt-dlp.version" ]] && YTDLP_INSTALLED=$(cat "$MF_BIN_DIR/yt-dlp.version")
+  if [[ -n "$YTDLP_LATEST" && "$YTDLP_LATEST" != "$YTDLP_INSTALLED" ]]; then
+    info "yt-dlp $YTDLP_CHANNEL 更新: ${YTDLP_INSTALLED:-none} → $YTDLP_LATEST"
+    YTDLP_ASSET="yt-dlp_linux"
+    case "$(uname -m)" in aarch64|arm64) YTDLP_ASSET="yt-dlp_linux_aarch64" ;; esac
+    curl -fsSL --retry 3 -o "$MF_BIN_DIR/yt-dlp.new" "https://github.com/$YTDLP_REPO/releases/latest/download/$YTDLP_ASSET" \
+      && chmod +x "$MF_BIN_DIR/yt-dlp.new" && echo "$YTDLP_LATEST" > "$MF_BIN_DIR/yt-dlp.version" \
+      && mv -f "$MF_BIN_DIR/yt-dlp.new" "$MF_BIN_DIR/yt-dlp" \
+      || warn "yt-dlp 更新失败，保留当前版本"
+  else
+    info "yt-dlp $YTDLP_CHANNEL 已是最新 ($YTDLP_INSTALLED)"
+  fi
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Port occupancy detection

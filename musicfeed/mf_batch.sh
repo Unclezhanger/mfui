@@ -22,10 +22,89 @@ source "$SCRIPT_DIR/mf_lib.sh"
 # ─────────────────────────────────────────────
 emit_json_error() {
     # usage: emit_json_error "error message"
-    python3 -c "
-import json, sys
-print(json.dumps({'ok': False, 'error': sys.argv[1]}, ensure_ascii=False))
-" "$1"
+    jq -cn --arg error "$1" '{ok: false, error: $error}'
+}
+# ── preview JSON 组装（jq 版，替代原 python 解析；字段结构与 WebUI 约定一致）──
+preview_json_album() {
+    # $1 = get_album_info 输出：行1 专辑名 / 行2 数量 / 行3 歌手 / 行4+ "N. 曲名"
+    local info="$1" album count artist line idx title tracks="" sep=""
+    album=$(printf '%s\n' "$info" | sed -n '1p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    count=$(printf '%s\n' "$info" | sed -n '2p'); [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    artist=$(printf '%s\n' "$info" | sed -n '3p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+        [ -z "$line" ] && continue
+        if [[ "$line" == *". "* ]]; then
+            idx="${line%%. *}"; title="${line#*. }"
+            [[ "$idx" =~ ^[0-9]+$ ]] || continue
+        else
+            idx=0; title="$line"
+        fi
+        tracks="$tracks$sep$(jq -cn --argjson idx "$idx" --arg title "$title" '{idx:$idx,title:$title,vid:"",hasMeta:true}')"
+        sep=","
+    done < <(printf '%s\n' "$info" | tail -n +4)
+    jq -cn --arg album "$album" --argjson count "$count" --arg artist "$artist" \
+        --argjson tracks "[$tracks]" \
+        '{ok:true, type:"album", albumName:$album, artist:$artist, trackCount:$count, tracks:$tracks, hasMetadata:true}'
+}
+
+preview_json_playlist() {
+    # $1 = get_playlist_info 输出：行1 名称 / 行2 数量 / 行3+ "N. 曲名|vid|hasMeta|uploader"
+    # $2 = type（playlist | ytm_radio）
+    local info="$1" type="$2" playlist count line idx rest title vid has_meta uploader
+    local tracks="" sep="" any_meta=false display_artist="" rest2 tj
+    playlist=$(printf '%s\n' "$info" | sed -n '1p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    count=$(printf '%s\n' "$info" | sed -n '2p'); [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+        [ -z "$line" ] && continue
+        if [[ "$line" == *". "* ]]; then
+            idx="${line%%. *}"; rest="${line#*. }"
+            [[ "$idx" =~ ^[0-9]+$ ]] || continue
+        else
+            idx=0; rest="$line"
+        fi
+        title="${rest%%|*}"
+        rest2="${rest#*|}"
+        if [[ "$rest2" == *"|"* ]]; then vid="${rest2%%|*}"; rest2="${rest2#*|}"; else vid="$rest2"; rest2=""; fi
+        if [[ "$rest2" == *"|"* ]]; then has_meta="${rest2%%|*}"; uploader="${rest2#*|}"; else has_meta="$rest2"; uploader=""; fi
+        [ "$has_meta" = "True" ] && any_meta=true
+        uploader=$(printf '%s' "$uploader" | sed -E 's/ - Topic$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [ -z "$display_artist" ] && [ -n "$uploader" ]; then display_artist="$uploader"; fi
+        tj=$(jq -cn --argjson idx "$idx" --arg title "$title" --arg vid "$vid" \
+            --argjson hm "$([ "$has_meta" = "True" ] && echo true || echo false)" --arg uploader "$uploader" \
+            '{idx:$idx,title:$title,vid:$vid,hasMeta:$hm,uploader:$uploader}')
+        tracks="$tracks$sep$tj"; sep=","
+    done < <(printf '%s\n' "$info" | tail -n +3)
+    jq -cn --arg type "$type" --arg album "$playlist" --arg artist "$display_artist" \
+        --argjson count "$count" --argjson hm "$any_meta" --argjson tracks "[$tracks]" \
+        '{ok:true, type:$type, albumName:$album, artist:$artist, trackCount:$count, tracks:$tracks, hasMetadata:$hm}'
+}
+
+preview_json_single() {
+    # $1 = get_single_info 输出：行1 专辑 / 行2 歌名 / 行3 歌手 / 行4 上传者 / 行5 hasMeta
+    local info="$1" album title artist uploader has_meta=false display_name display_artist
+    album=$(printf '%s\n' "$info" | sed -n '1p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    title=$(printf '%s\n' "$info" | sed -n '2p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'); [ -z "$title" ] && title="Unknown"
+    artist=$(printf '%s\n' "$info" | sed -n '3p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    uploader=$(printf '%s\n' "$info" | sed -n '4p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ "$(printf '%s\n' "$info" | sed -n '5p')" = "True" ] && has_meta=true
+    display_name="$album"; [ -z "$display_name" ] && display_name="$title"
+    display_artist="$artist"; [ -z "$display_artist" ] && display_artist="$uploader"
+    jq -cn --arg dn "$display_name" --arg da "$display_artist" --arg title "$title" --argjson hm "$has_meta" \
+        '{ok:true, type:"single", albumName:$dn, artist:$da, trackCount:1, tracks:[{idx:1,title:$title,vid:"",hasMeta:$hm}], hasMetadata:$hm}'
+}
+# ── done 文件写入（WebUI 轮询任务结束状态用）──
+write_done_file() {
+    local file="$1" ec="$2" err="${3:-}" ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ' | sed -E 's/(\.[0-9]{6})[0-9]+$/\1/')
+    if [ -n "$err" ]; then
+        jq -n --argjson ec "$ec" --arg ts "$ts" --arg err "$err" \
+            '{exitCode:$ec, finishedAt:$ts, error:$err}' > "$file"
+    else
+        jq -n --argjson ec "$ec" --arg ts "$ts" \
+            '{exitCode:$ec, finishedAt:$ts}' > "$file"
+    fi
 }
 
 # ─────────────────────────────────────────────
@@ -64,40 +143,7 @@ EOF
                 emit_json_error "preview: failed to fetch album metadata (yt-dlp returned empty)"
                 exit 3
             fi
-            printf '%s\n' "$info" | python3 -c '
-import sys, json
-raw = sys.stdin.read()
-lines = raw.split("\n")
-album = lines[0].strip() if len(lines) > 0 else "Unknown Album"
-try:
-    count = int(lines[1].strip()) if len(lines) > 1 else 0
-except ValueError:
-    count = 0
-artist = lines[2].strip() if len(lines) > 2 else "Unknown Artist"
-tracks = []
-for line in lines[3:]:
-    s = line.strip()
-    if not s: continue
-    if ". " in s:
-        idx_str, title = s.split(". ", 1)
-        try:
-            idx = int(idx_str)
-        except ValueError:
-            continue
-    else:
-        idx = 0
-        title = s
-    tracks.append({"idx": idx, "title": title, "vid": "", "hasMeta": True})
-print(json.dumps({
-    "ok": True,
-    "type": "album",
-    "albumName": album,
-    "artist": artist,
-    "trackCount": count,
-    "tracks": tracks,
-    "hasMetadata": True
-}, ensure_ascii=False))
-'
+            preview_json_album "$info"
             ;;
         playlist|ytm_radio)
             local info
@@ -106,48 +152,7 @@ print(json.dumps({
                 emit_json_error "preview: failed to fetch playlist metadata (yt-dlp returned empty)"
                 exit 3
             fi
-            printf '%s\n' "$info" | python3 -c '
-import sys, json, re
-raw = sys.stdin.read()
-lines = raw.split("\n")
-playlist = lines[0].strip() if len(lines) > 0 else "Unknown Playlist"
-try:
-    count = int(lines[1].strip()) if len(lines) > 1 else 0
-except ValueError:
-    count = 0
-tracks = []
-any_meta = False
-display_artist = ""
-for line in lines[2:]:
-    s = line.strip()
-    if not s: continue
-    if ". " in s:
-        idx_str, rest = s.split(". ", 1)
-        try:
-            idx = int(idx_str)
-        except ValueError:
-            continue
-    else:
-        idx = 0
-        rest = s
-    parts = rest.split("|")
-    title = parts[0] if len(parts) > 0 else ""
-    vid = parts[1] if len(parts) > 1 else ""
-    has_meta = (len(parts) > 2 and parts[2] == "True")
-    uploader = re.sub(r" - Topic$", "", (parts[3] if len(parts) > 3 else "")).strip()
-    if has_meta: any_meta = True
-    if not display_artist and uploader: display_artist = uploader
-    tracks.append({"idx": idx, "title": title, "vid": vid, "hasMeta": has_meta, "uploader": uploader})
-print(json.dumps({
-    "ok": True,
-    "type": "'"$type"'",
-    "albumName": playlist,
-    "artist": display_artist,
-    "trackCount": count,
-    "tracks": tracks,
-    "hasMetadata": any_meta
-}, ensure_ascii=False))
-'
+            preview_json_playlist "$info" "$type"
             ;;
         single)
             local info
@@ -156,28 +161,7 @@ print(json.dumps({
                 emit_json_error "preview: failed to fetch single metadata (yt-dlp returned empty)"
                 exit 3
             fi
-            printf '%s\n' "$info" | python3 -c '
-import sys, json
-raw = sys.stdin.read()
-lines = raw.split("\n")
-album = lines[0].strip() if len(lines) > 0 else ""
-title = lines[1].strip() if len(lines) > 1 else "Unknown"
-artist = lines[2].strip() if len(lines) > 2 else ""
-uploader = lines[3].strip() if len(lines) > 3 else ""
-has_meta = (len(lines) > 4 and lines[4].strip() == "True")
-display_name = album if album else title
-display_artist = artist if artist else uploader
-tracks = [{"idx": 1, "title": title, "vid": "", "hasMeta": has_meta}]
-print(json.dumps({
-    "ok": True,
-    "type": "single",
-    "albumName": display_name,
-    "artist": display_artist,
-    "trackCount": 1,
-    "tracks": tracks,
-    "hasMetadata": has_meta
-}, ensure_ascii=False))
-'
+            preview_json_single "$info"
             ;;
         *)
             emit_json_error "preview: unsupported type $type"
@@ -283,13 +267,16 @@ EOF
     type=$(get_link_type "$url")
     [ "$type" = "unknown" ] && {
         echo "download: unknown link type for $url" >&2
-        python3 -c "
-import json, datetime
-with open('$DONE_FILE', 'w') as f:
-    json.dump({'exitCode': 2, 'finishedAt': datetime.datetime.utcnow().isoformat() + 'Z', 'error': 'unknown link type'}, f)
-"
+        write_done_file "$DONE_FILE" 2 "unknown link type"
         exit 2
     }
+
+    # single 语义只取当前视频：剥离 &list= 参数，否则 watch?v=X&list=RD… 的
+    # Mix/Radio 形态会让 yt-dlp 把整个播放列表逐条下载成 temp 文件
+    if [ "$type" = "single" ] && [[ "$url" == *"&list="* ]]; then
+        url="${url%%&list=*}"
+        echo "download: single link — stripped playlist parameter" >&2
+    fi
 
     # playlist 类型 → 根据 --playlist-mode 决定
     if [ "$type" = "playlist" ] && [ "$playlist_mode" = "ytm" ]; then
@@ -355,11 +342,7 @@ with open('$DONE_FILE', 'w') as f:
 
     [ -z "$DISPLAY_NAME" ] && {
         echo "download: could not fetch info, skipping" >&2
-        python3 -c "
-import json, datetime
-with open('$DONE_FILE', 'w') as f:
-    json.dump({'exitCode': 3, 'finishedAt': datetime.datetime.utcnow().isoformat() + 'Z', 'error': 'no metadata'}, f)
-"
+        write_done_file "$DONE_FILE" 3 "no metadata"
         exit 3
     }
 
@@ -569,19 +552,11 @@ cleanup_worker() {
 }
 
 write_done() {
-    local ec="${1:-0}"
-    python3 - "$DONE_FILE" "$ec" << 'PYDONE'
-import json, datetime, sys, os
-_done_file = sys.argv[1]
-_exit_code = int(sys.argv[2])
-_finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
-_data = {'exitCode': _exit_code, 'finishedAt': _finished_at}
-try:
-    with open(_done_file, 'w') as f:
-        json.dump(_data, f)
-except Exception as e:
-    sys.stderr.write(f'failed to write done file: {e}\n')
-PYDONE
+    local ec="${1:-0}" ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ' | sed -E 's/(\.[0-9]{6})[0-9]+Z$/\1Z/')
+    jq -n --argjson ec "$ec" --arg ts "$ts" \
+        '{exitCode:$ec, finishedAt:$ts}' > "$DONE_FILE" 2>/dev/null \
+        || printf '{"exitCode": %s, "finishedAt": "%s"}\n' "$ec" "$ts" > "$DONE_FILE"
 }
 
 on_worker_exit() {
@@ -600,16 +575,11 @@ log() {
     local event="${3:-}"
     local line
     if [ "$JSON_OUTPUT" = "1" ]; then
-        line=$(printf '%s' "$msg" | python3 -c '
-import json, datetime, sys
-msg = sys.stdin.read().replace("\n", " ").replace("\r", " ").replace("\\", "\\\\")
-print(json.dumps({
-    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-    "level": sys.argv[1],
-    "event": sys.argv[2],
-    "msg": msg
-}, ensure_ascii=False))
-' "$level" "$event" 2>/dev/null)
+        local ts
+        ts=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ' | sed -E 's/(\.[0-9]{6})[0-9]+Z$/\1Z/')
+        msg="${msg//$'\n'/ }"; msg="${msg//$'\r'/ }"
+        line=$(jq -cn --arg ts "$ts" --arg level "$level" --arg event "$event" --arg msg "$msg" \
+            '{ts:$ts, level:$level, event:$event, msg:$msg}')
     else
         line="[$(date '+%H:%M:%S')] $msg"
     fi
@@ -626,41 +596,49 @@ print(json.dumps({
 #   LAST_FRAC    上次发出的整数百分比（防事件风暴）
 DEST_COUNT=0; LAST_FRAC=-1; TOTAL_TRACKS=1
 ytdlp_run() {
-    local st="/tmp/ytdlp_st_$$"
-    while IFS= read -r line; do
-        echo "$line" >> "$LOG_FILE"
-        case "$line" in
-            *"[download] Destination:"*)
-                DEST_COUNT=$((DEST_COUNT+1))
-                log "Fetching: ${line##*Destination: }" "info" "ytdlp_dest"
-                ;;
-            *"[download] "*"%"*)
-                local pct
-                pct=$(printf '%s' "$line" | sed -n 's/^\[download\] *\([0-9][0-9.]*\)%.*/\1/p')
-                if [ -n "$pct" ]; then
-                    local frac
-                    frac=$(awk -v d="$DEST_COUNT" -v p="$pct" -v t="${TOTAL_TRACKS:-1}" \
-                        'BEGIN{f=(d-1+p/100)/t; if(f<0)f=0; if(f>0.99)f=0.99; printf "%d", f*100}')
-                    if [ "$frac" != "$LAST_FRAC" ]; then
-                        LAST_FRAC="$frac"
-                        log "Downloading $frac%" "info" "ytdlp_frac"
+    local st="/tmp/ytdlp_st_$$" attempt rc=1 dest0
+    # v4.1: 瞬时失败自动重试一次（YouTube 反爬 "Sign in to confirm" / 403 间歇出现，
+    # 数秒后重试通常成功——WebUI 无人值守场景必须自愈）。重试前回滚 DEST_COUNT，
+    # 进度百分比不因重跑虚增。两次都失败才置 WORKER_ERROR。
+    for attempt in 1 2; do
+        dest0=$DEST_COUNT
+        while IFS= read -r line; do
+            echo "$line" >> "$LOG_FILE"
+            case "$line" in
+                *"[download] Destination:"*)
+                    DEST_COUNT=$((DEST_COUNT+1))
+                    log "Fetching: ${line##*Destination: }" "info" "ytdlp_dest"
+                    ;;
+                *"[download] "*"%"*)
+                    local pct
+                    pct=$(printf '%s' "$line" | sed -n 's/^\[download\] *\([0-9][0-9.]*\)%.*/\1/p')
+                    if [ -n "$pct" ]; then
+                        local frac
+                        frac=$(awk -v d="$DEST_COUNT" -v p="$pct" -v t="${TOTAL_TRACKS:-1}" \
+                            'BEGIN{f=(d-1+p/100)/t; if(f<0)f=0; if(f>0.99)f=0.99; printf "%d", f*100}')
+                        if [ "$frac" != "$LAST_FRAC" ]; then
+                            LAST_FRAC="$frac"
+                            log "Downloading $frac%" "info" "ytdlp_frac"
+                        fi
                     fi
-                fi
-                ;;
-        esac
-    # --trim-filenames: 超长标题（宣传文案类）文件名截断，避免 +.info.json 后超 255 字节
-    # （Errno 36）。注意 yt-dlp 按字符数截断而文件系统按字节数限制，中文 UTF-8 每字 3 字节，
-    # 78 字符 ≈ 最坏全中文 234 字节，是保证安全上限；只截文件名，不影响标签内容
-    done < <("$YTDLP" --newline --trim-filenames 78 "$@" 2>&1; echo $? > "$st")
-    local ec
-    ec=$(cat "$st" 2>/dev/null || echo 1)
-    rm -f "$st"
-    if [ "$ec" != "0" ]; then
-        WORKER_ERROR=1
-        log "yt-dlp exit=$ec" "error" "ytdlp_error"
-        return "$ec"
-    fi
-    return 0
+                    ;;
+            esac
+        # --trim-filenames: 超长标题（宣传文案类）文件名截断，避免 +.info.json 后超 255 字节
+        # （Errno 36）。注意 yt-dlp 按字符数截断而文件系统按字节数限制，中文 UTF-8 每字 3 字节，
+        # 78 字符 ≈ 最坏全中文 234 字节，是保证安全上限；只截文件名，不影响标签内容
+        done < <("$YTDLP" --newline --trim-filenames 78 "$@" 2>&1; echo $? > "$st")
+        rc=$(cat "$st" 2>/dev/null || echo 1)
+        rm -f "$st"
+        if [ "$rc" = "0" ]; then return 0; fi
+        log "yt-dlp exit=$rc" "error" "ytdlp_error"
+        if [ "$attempt" -lt 2 ]; then
+            DEST_COUNT=$dest0
+            log "Transient failure — retrying once in 10s..." "warn" "ytdlp_retry"
+            sleep 10
+        fi
+    done
+    WORKER_ERROR=1
+    return "$rc"
 }
 
 file_size() {
@@ -681,246 +659,419 @@ cover_compress() {
     ffmpeg -i "$src" -q:v 2 -y "$dst" 2>/dev/null
     [ -f "$dst" ] && return 0 || return 1
 }
+MF_POLL_RE='歌詞|歌词|動態|动态|MV|Official|官方|Video|Audio|Visualizer|Live|完整版|主題曲|主题曲|片尾曲|片頭曲|片头曲'
+MF_KEEP_RE='feat|ft\.|国|國|粤|粵'
+MF_BR_RE='（[^（）()]*）|\([^()]*\)|『[^『』]*』|「[^「」]*」|【[^【】]*】|《[^《》]*》|\[[^][]*\]'
+
+mf_poll_match() { grep -qiE "$MF_POLL_RE" <<< "$1"; }
+mf_keep_match() { grep -qiE "$MF_KEEP_RE" <<< "$1"; }
+
+# 单层去壳：一次左到右扫描替换全部括号组（等价 python re.sub 一次调用）
+mf_br_proc_once() {
+    local remaining="$1" result="" match before after inner flat
+    while :; do
+        match=$(grep -oE "$MF_BR_RE" <<< "$remaining" | head -1)
+        [ -z "$match" ] && { result+="$remaining"; break; }
+        before="${remaining%%"$match"*}"
+        after="${remaining#*"$match"}"
+        inner=$(sed -E 's/^.(.*).$/\1/' <<< "$match")
+        flat=$(sed -E "s/$MF_BR_RE/ /g" <<< "$inner")
+        if mf_poll_match "$flat"; then
+            result+="$before"
+        elif mf_keep_match "$flat"; then
+            result+="$before$match"
+        else
+            result+="$before$inner"
+        fi
+        remaining="$after"
+    done
+    printf '%s' "$result"
+}
+
+# 反复迭代到不动点（等价 python while prev != s 外层循环）
+mf_br_proc() {
+    local prev cur="$1"
+    while :; do
+        prev="$cur"
+        cur=$(mf_br_proc_once "$prev")
+        [ "$cur" = "$prev" ] && break
+    done
+    printf '%s' "$cur"
+}
+
+mf_clean() {
+    local s
+    s=$(sed -E 's/[[:space:]]*-[[:space:]]*$//' <<< "$1")
+    s=$(sed -E 's/[[:space:]]{2,}/ /g' <<< "$s")
+    s=$(sed -E 's/^[ -]+//; s/[ -]+$//' <<< "$s")
+    printf '%s' "$s"
+}
+
+mf_esc() { printf '%s' "${1//|/｜}"; }
+
+# 书名号优先匹配：《》→【】→[ ]，返回第一个命中的括号内容 + 之前的文字
+mf_bracket_priority_match() {
+    local t="$1" pat m inner
+    for pat in '《[^《》]*》' '【[^【】]*】' '\[[^][]*\]'; do
+        m=$(grep -oE "$pat" <<< "$t" | head -1)
+        if [ -n "$m" ]; then
+            inner=$(sed -E 's/^.(.*).$/\1/' <<< "$m")
+            BR1_INNER="$inner"
+            BR1_PREFIX="${t%%"$m"*}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 extract_nm_info() {
-    python3 - "$1" "$2" << 'NM_PYEOF'
-import re, sys
+    local title_raw="$1" up_raw="$2"
+    local up t song artist prefix flat_song t2 plen
+    local -a segs=() segs_raw=() keep=()
+    local seg trimmed i joined
 
-POLL = re.compile(r'歌詞|歌词|動態|动态|MV|Official|官方|Video|Audio|Visualizer|Live|完整版|主題曲|主题曲|片尾曲|片頭曲|片头曲', re.I)
-KEEP = re.compile(r'feat|ft\.|国|國|粤|粵', re.I)
-BR = re.compile(r'（([^（）()]*)）|\(([^()]*)\)|『([^『』]*)』|「([^「」]*)」|【([^【】]*)】|《([^《》]*)》|\[([^\[\]]*)\]')
+    up=$(sed -E 's/[[:space:]]*-[[:space:]]*Topic[[:space:]]*$//' <<< "$up_raw")
+    up=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$up")
 
-def inner_of(m):
-    return next(g for g in m.groups() if g is not None)
+    t=$(sed 's/–/-/g; s/—/-/g' <<< "$title_raw")
 
-def br_proc(s):
-    # 逐层（最内层优先）迭代：污染词连符号删；白名单层整体保留；
-    # 其余去壳留内容。嵌套判定只看本层自身文字（剥离内层括号后再匹配）
-    prev = None
-    while prev != s:
-        prev = s
-        def repl(m):
-            inner = inner_of(m)
-            flat = BR.sub(' ', inner)
-            if POLL.search(flat):
-                return ''
-            if KEEP.search(flat):
-                return m.group(0)
-            return inner
-        s = BR.sub(repl, s)
-    return s
+    # 0) 方括号全量扫描（v4.1）：按出现顺序取第一个「内容未污染、且前缀非空 ≤30 字」
+    #    的 [ 歌名 ] 组为歌名，前缀为歌手。厂牌官方 MV 的惯例是「歌手 [ 歌名 ] Official MV」，
+    #    而片尾署名括号（影集《劇名》插曲之类）前面拖着长前缀，会被 30 字上限自然排除。
+    #    只扫 [ ]：圆括号/书名号/【】更多承担署名、feat、纯享标签等角色，仍走原有优先级。
+    #    扫描不中（如括号组在标题开头、无歌手前缀）则落入原有书名号优先逻辑。
+    local bm inner2 pre2 flat2
+    while IFS= read -r bm; do
+        [ -z "$bm" ] && continue
+        inner2=$(sed -E 's/^.(.*).$/\1/' <<< "$bm")
+        song=$(mf_br_proc "$inner2")
+        song=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$song")
+        flat2=$(sed -E "s/$MF_BR_RE/ /g" <<< "$song")
+        if [ -z "$song" ] || mf_poll_match "$flat2"; then continue; fi
+        pre2="${t%%"$bm"*}"
+        [ -z "$pre2" ] && continue
+        pre2=$(sed -E 's/^(\[[^]]*\][[:space:]]*)+//' <<< "$pre2")
+        pre2=$(sed -E 's/[[:space:]:：*|｜-]+$//' <<< "$pre2")
+        pre2=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$pre2")
+        plen=$(printf '%s' "$pre2" | wc -m)
+        if [ -n "$pre2" ] && [ "$plen" -le 30 ]; then
+            echo "$(mf_esc "$song")|$(mf_esc "$pre2")"
+            return 0
+        fi
+    done < <(grep -oE '\[[^][]*\]' <<< "$t")
 
-def clean(s):
-    s = re.sub(r'\s*-\s*$', '', s)
-    s = re.sub(r'\s{2,}', ' ', s)
-    return s.strip(' -').strip()
+    # 1) 书名号优先（内容被污染词清空时视为无书名号，继续走后面分支）
+    if mf_bracket_priority_match "$t"; then
+        song=$(mf_br_proc "$BR1_INNER")
+        song=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$song")
+        flat_song=$(sed -E "s/$MF_BR_RE/ /g" <<< "$song")
+        if [ -n "$song" ] && ! mf_poll_match "$flat_song"; then
+            prefix=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$BR1_PREFIX")
+            prefix=$(sed -E 's/^(\[[^]]*\][[:space:]]*)+//' <<< "$prefix")
+            prefix=$(sed -E 's/[[:space:]:：*|｜-]+$//' <<< "$prefix")
+            prefix=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$prefix")
+            plen=$(printf '%s' "$prefix" | wc -m)
+            if [ -n "$prefix" ] && [ "$plen" -le 30 ]; then
+                artist="$prefix"
+            else
+                artist="$up"
+            fi
+            echo "$(mf_esc "$song")|$(mf_esc "$artist")"
+            return 0
+        fi
+    fi
 
-def esc(s):
-    return (s or '').replace('|', '｜')
+    # 2) 无书名号：括号清洗后按 " - " 分段
+    t2=$(mf_br_proc "$t")
+    local delim=$'\x01' t2_delim
+    t2_delim="${t2// - /$delim}"
+    local oldIFS="$IFS"; IFS="$delim"; read -ra segs_raw <<< "$t2_delim"; IFS="$oldIFS"
+    for seg in "${segs_raw[@]}"; do
+        trimmed=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$seg")
+        [ -n "$trimmed" ] && segs+=("$trimmed")
+    done
 
-title = sys.argv[1] or ''
-up = re.sub(r'\s*-\s*Topic\s*$', '', sys.argv[2] or '').strip()
-t = title.replace('–', '-').replace('—', '-')
+    if [ "${#segs[@]}" -ge 2 ]; then
+        if [ -n "$up" ]; then
+            keep=()
+            for seg in "${segs[@]}"; do
+                if [[ "$up" == *"$seg"* || "$seg" == *"$up"* ]]; then
+                    continue
+                fi
+                keep+=("$seg")
+            done
+            if [ "${#keep[@]}" -gt 0 ] && [ "${#keep[@]}" -lt "${#segs[@]}" ]; then
+                echo "$(mf_esc "$(mf_clean "${keep[0]}")")|$(mf_esc "$up")"
+                return 0
+            fi
+        fi
+        joined=""
+        for ((i=1; i<${#segs[@]}; i++)); do
+            if [ -z "$joined" ]; then joined="${segs[$i]}"; else joined="$joined - ${segs[$i]}"; fi
+        done
+        echo "$(mf_esc "$(mf_clean "$joined")")|$(mf_esc "${segs[0]}")"
+        return 0
+    fi
 
-# 1) 歌名书名号优先（内容被污染词清空时视为无书名号，继续走后面分支）
-m = re.search(r'《([^《》]*)》', t) or re.search(r'【([^【】]*)】', t) or re.search(r'\[([^\[\]]*)\]', t)
-if m:
-    song = br_proc(m.group(1)).strip()
-    # 括号内容本身（已无括号包裹）也可能整个是污染词（如【動態歌詞】），需再扁平检查
-    if song and not POLL.search(BR.sub(' ', song)):
-        prefix = re.sub(r'^(\[[^\]]*\]\s*)+', '', t[:m.start()].strip())
-        prefix = re.sub(r'[\s\-:：*|｜]+$', '', prefix).strip()
-        # 前缀过长（宣传文案）时歌手 fallback uploader
-        artist = prefix if prefix and len(prefix) <= 30 else up
-        print(f"{esc(song)}|{esc(artist)}")
-        sys.exit(0)
-
-# 2) 无书名号：括号清洗后按 " - " 分段
-t2 = br_proc(t)
-segs = [s.strip() for s in t2.split(' - ') if s.strip()]
-if len(segs) >= 2:
-    if up:
-        keep = [s for s in segs if not (s in up or up in s)]
-        if keep and len(keep) < len(segs):
-            print(f"{esc(clean(keep[0]))}|{esc(up)}")
-            sys.exit(0)
-    # 盲猜：左段为歌手（无法区分 歌手-歌名 / 歌名-歌手，已知局限）
-    print(f"{esc(clean(' - '.join(segs[1:])))}|{esc(segs[0])}")
-    sys.exit(0)
-
-# 3) 纯歌名
-print(f"{esc(clean(t2))}|{esc(up)}")
-NM_PYEOF
+    # 3) 纯歌名
+    echo "$(mf_esc "$(mf_clean "$t2")")|$(mf_esc "$up")"
 }
 
 
+mf_split_artists() {
+    local input="$1"
+    if [ -z "$input" ]; then printf '%s\n' "Unknown Artist"; return; fi
+    input="${input//，/,}"
+    local normalized
+    normalized=$(printf '%s' "$input" | sed -E \
+        -e 's/[[:space:]]+feat\.[[:space:]]+/\n/gI' \
+        -e 's/[[:space:]]+ft\.[[:space:]]+/\n/gI' \
+        -e 's/[[:space:]]+&[[:space:]]+/\n/g' \
+        -e 's/[[:space:]]*,[[:space:]]*/\n/g' \
+        -e 's/[[:space:]]+with[[:space:]]+/\n/gI' \
+        -e 's/[[:space:]]+vs\.[[:space:]]+/\n/gI')
+    local seen=() out=() line low dup s
+    while IFS= read -r line; do
+        line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -z "$line" ] && continue
+        low=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
+        dup=0
+        for s in "${seen[@]}"; do [ "$s" = "$low" ] && { dup=1; break; }; done
+        [ "$dup" -eq 0 ] && { seen+=("$low"); out+=("$line"); }
+    done <<< "$normalized"
+    if [ "${#out[@]}" -eq 0 ]; then printf '%s\n' "Unknown Artist"; return; fi
+    printf '%s\n' "${out[@]}"
+}
+
+# 多艺人 → 单字符串（ffmpeg CLI 无法像 mutagen 那样写多值标签，
+# 用 "; " 拼接作为折中方案，是本次迁移与 mutagen 版本行为的主要差异点，需重点验证）
+mf_artists_joined() {
+    local joined
+    joined=$(mf_split_artists "$1" | tr '\n' '\036')
+    joined="${joined%$'\036'}"
+    joined="${joined//$'\036'/; }"
+    printf '%s' "$joined"
+}
+
+# 32 位大端整数 → 原始字节（FLAC Picture Block 头部用，纯 bash+printf，无外部依赖）
+be32_raw() {
+    local n="$1" b1 b2 b3 b4 esc
+    b1=$(( (n>>24)&255 )); b2=$(( (n>>16)&255 )); b3=$(( (n>>8)&255 )); b4=$(( n&255 ))
+    esc=$(printf '\\%03o\\%03o\\%03o\\%03o' "$b1" "$b2" "$b3" "$b4")
+    printf '%b' "$esc"
+}
+
+# 手工构造 FLAC Picture Block 并 base64（等价于 mutagen 的 Picture().write()），
+# 用途：ogg/opus 容器下 ffmpeg 无法像 mp4 那样用 -map 1:v 直接挂封面视频流
+# （实测 "Unsupported codec id in stream 1" mux 失败），但可以把这个 block 当作普通
+# metadata_block_picture 文本标签写入——ffmpeg 会在读取时自动识别还原成 attached_pic 视频流，
+# 效果与 mutagen 版本完全一致（已用 ffprobe 验证 DISPOSITION:attached_pic=1）
+mf_flac_picture_b64() {
+    local cover="$1" mime="image/jpeg" w h dims tmp_hdr tmp_blob b64 dlen
+    dims=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$cover" 2>/dev/null)
+    w="${dims%x*}"; h="${dims#*x}"
+    [[ "$w" =~ ^[0-9]+$ ]] || w=0
+    [[ "$h" =~ ^[0-9]+$ ]] || h=0
+    dlen=$(file_size "$cover")
+    tmp_hdr=$(mktemp)
+    {
+        be32_raw 3                 # picture type 3 = front cover
+        be32_raw "${#mime}"
+        printf '%s' "$mime"
+        be32_raw 0                 # description length = 0
+        be32_raw "$w"
+        be32_raw "$h"
+        be32_raw 24                # color depth
+        be32_raw 0                 # colors used (非索引色)
+        be32_raw "$dlen"
+    } > "$tmp_hdr"
+    tmp_blob=$(mktemp)
+    cat "$tmp_hdr" "$cover" > "$tmp_blob"
+    b64=$(base64 -w0 "$tmp_blob")
+    rm -f "$tmp_hdr" "$tmp_blob"
+    printf '%s' "$b64"
+}
+
+# ffmpeg 打标签核心：$1=文件路径 $2=封面文件("" 表示不嵌封面)，
+# 其余参数为 "key=value" 元数据对；value 传空字符串 = 显式清除该字段，
+# 未列出的字段一律透传原有值（对应 -map_metadata 0，行为对齐 mutagen 的"只改被赋值字段"）
+# ffmetadata 文件格式转义（=、;、#、\ 需要反斜杠转义；换行一律压扁成空格避免格式错乱）
+mf_ffmeta_esc() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/=/\\=/g' -e 's/;/\\;/g' -e 's/#/\\#/g' | tr '\n' ' '
+}
+
+# ffmpeg 打标签核心：$1=文件路径 $2=封面文件("" 表示不嵌封面)，
+# 其余参数为 "key=value" 元数据对；value 传空字符串 = 显式清除该字段，
+# 未列出的字段一律透传原有值。
+#
+# v4.0.1: 修复真实实况——封面 base64（几百 KB）直接塞进 -metadata CLI 参数会撞到系统
+# ARG_MAX 导致 "Argument list too long"（execve E2BIG）。现在改为：先用 ffprobe 读出
+# 原文件全部已有标签，与覆盖字段在 bash 关联数组里合并好，一次性写成 ffmpeg 的
+# ffmetadata 文件（-f ffmetadata，无参数长度限制），再用 -map_metadata 1 从文件喂入，
+# 不再通过命令行参数传任何标签值（包括封面 base64）。
+mf_ffmpeg_apply() {
+    local fpath="$1" cover="$2"; shift 2
+    local ext dir base tmp_out meta_file args has_cover_stream=0 kv k v pic_b64 err_out rc
+    ext="${fpath##*.}"
+    dir="$(dirname "$fpath")"; base="$(basename "$fpath")"
+    tmp_out="${dir}/.mf_tmp_$$_${base}"
+    meta_file="$(mktemp)"
+
+    local -A TAGS=()
+    while IFS='=' read -r k v; do
+        k="$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"
+        [ -n "$k" ] && TAGS["$k"]="$v"
+    done < <(ffprobe -v error -show_entries format_tags:stream_tags -of default=noprint_wrappers=1 "$fpath" 2>/dev/null | sed -n 's/^TAG://p')
+
+    if [ -n "$cover" ] && [ -f "$cover" ]; then
+        if [ "$ext" = "m4a" ]; then
+            has_cover_stream=1
+        else
+            # opus/ogg：写成 metadata_block_picture 文本标签（走文件，不再走 argv）
+            pic_b64=$(mf_flac_picture_b64 "$cover")
+            [ -n "$pic_b64" ] && TAGS["metadata_block_picture"]="$pic_b64"
+        fi
+    fi
+
+    for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        k="$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"
+        if [ -z "$v" ]; then
+            unset "TAGS[$k]"
+        else
+            TAGS["$k"]="$v"
+        fi
+    done
+
+    {
+        echo ";FFMETADATA1"
+        for k in "${!TAGS[@]}"; do
+            printf '%s=%s\n' "$(mf_ffmeta_esc "$k")" "$(mf_ffmeta_esc "${TAGS[$k]}")"
+        done
+    } > "$meta_file"
+
+    args=(-y -i "$fpath" -i "$meta_file")
+    [ "$has_cover_stream" -eq 1 ] && args+=(-i "$cover")
+    # -map_metadata:s:a -1 关键：阻止 ffmpeg 在 -map 0:a 时自动把源音轨自身的
+    # stream 级标签（ogg/opus 的 vorbis comment 本就挂在音轨上）带过来，
+    # 否则会跟我们写的全局标签重复共存，读回来到底显示哪个不可控
+    args+=(-map_metadata 1 -map_metadata:s:a -1 -map 0:a)
+    if [ "$has_cover_stream" -eq 1 ]; then
+        # v4.0.4: 封面源全程是 jpg（i.ytimg.com 原图 / ffmpeg 裁剪压缩产物），之前
+        # -c:v mjpeg 会把封面再编码一代（实测 48KB→33KB 有损），与 mutagen 原字节
+        # 嵌入的行为不一致。JPEG 魔数（FF D8）命中时改用流复制按原字节嵌入；
+        # 非 jpg（防扩展名伪装的 webp/png）兜底仍走重编码保证可读
+        local cover_is_jpeg=0
+        [ "$(head -c 2 "$cover" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "ffd8" ] && cover_is_jpeg=1
+        if [ "$cover_is_jpeg" -eq 1 ]; then
+            args+=(-map 2:v -c:v copy -disposition:v attached_pic)
+        else
+            args+=(-map 2:v -c:v mjpeg -disposition:v attached_pic)
+        fi
+    fi
+    args+=(-c:a copy)
+    args+=("$tmp_out")
+
+    err_out=$(ffmpeg "${args[@]}" 2>&1 >/dev/null)
+    rc=$?
+    rm -f "$meta_file"
+    if [ "$rc" -eq 0 ] && [ -s "$tmp_out" ]; then
+        mv -f "$tmp_out" "$fpath"
+        return 0
+    else
+        log "  ⚠️ ffmpeg tag write failed for $(basename "$fpath"):"
+        log "$err_out"
+        rm -f "$tmp_out" 2>/dev/null
+        return 1
+    fi
+}
+
+# mv_write_id3: fpath title artist album album_artist [cover_file]
+# 全量覆盖写（对应原 mutagen 版本：title/artist 必写，album/album_artist 为空则清除）
 mv_write_id3() {
-    python3 - "$@" << 'PYEOF'
-import sys, os, re
-
-def split_artists(artist_str):
-    if not artist_str:
-        return ['Unknown Artist']
-    artist_str = artist_str.replace('\uff0c', ',')
-    patterns = [
-        r'\s+feat\.\s+',
-        r'\s+ft\.\s+',
-        r'\s+&\s+',
-        r'\s*,\s*',
-        r'\s+with\s+',
-        r'\s+vs\.\s+'
-    ]
-    result = [artist_str]
-    for pattern in patterns:
-        new_result = []
-        for item in result:
-            parts = re.split(pattern, item, flags=re.IGNORECASE)
-            new_result.extend([p.strip() for p in parts if p.strip()])
-        result = new_result
-    seen = set()
-    unique = []
-    for a in result:
-        if a and a not in seen and a.lower() not in seen:
-            seen.add(a.lower())
-            unique.append(a)
-    return unique if unique else ['Unknown Artist']
-
-fpath = sys.argv[1]; title = sys.argv[2]; artist = sys.argv[3]
-album = sys.argv[4]; album_artist = sys.argv[5]; cover_file = sys.argv[6] if len(sys.argv) > 6 else ""
-
-artists_list = split_artists(artist)
-
-if fpath.endswith('.m4a'):
-    from mutagen.mp4 import MP4, MP4Cover
-    audio = MP4(fpath)
-    audio['\xa9nam'] = [title]
-    audio['\xa9ART'] = artists_list
-    if album: audio['\xa9alb'] = [album]
-    elif '\xa9alb' in audio: del audio['\xa9alb']
-    if album_artist: audio['aART'] = [album_artist]
-    elif 'aART' in audio: del audio['aART']
-    if cover_file and os.path.exists(cover_file):
-        with open(cover_file, 'rb') as img:
-            audio['covr'] = [MP4Cover(img.read(), imageformat=MP4Cover.FORMAT_JPEG)]
-        print(f'  +Cover: {os.path.basename(fpath)}')
-    else:
-        print(f'  ID3: {os.path.basename(fpath)}')
-    audio.save()
-else:
-    from mutagen.oggopus import OggOpus
-    audio = OggOpus(fpath)
-    audio['title'] = [title]
-    audio['artist'] = artists_list
-    if album: audio['album'] = [album]
-    elif 'album' in audio: del audio['album']
-    if album_artist: audio['ALBUMARTIST'] = [album_artist]
-    elif 'ALBUMARTIST' in audio: del audio['ALBUMARTIST']
-    if cover_file and os.path.exists(cover_file):
-        from mutagen.flac import Picture
-        import base64
-        with open(cover_file, 'rb') as img:
-            pic = Picture(); pic.data = img.read(); pic.type = 3; pic.mime = 'image/jpeg'
-            audio['metadata_block_picture'] = [base64.b64encode(pic.write()).decode('ascii')]
-        print(f'  +Cover: {os.path.basename(fpath)}')
-    else:
-        print(f'  ID3: {os.path.basename(fpath)}')
-    audio.save()
-PYEOF
+    local fpath="$1" title="$2" artist="$3" album="$4" album_artist="$5" cover_file="${6:-}"
+    local artists_str kv=()
+    artists_str=$(mf_artists_joined "$artist")
+    kv+=("title=$title" "artist=$artists_str")
+    if [ -n "$album" ]; then kv+=("album=$album"); else kv+=("album="); fi
+    if [ -n "$album_artist" ]; then kv+=("album_artist=$album_artist"); else kv+=("album_artist="); fi
+    if mf_ffmpeg_apply "$fpath" "$cover_file" "${kv[@]}"; then
+        if [ -n "$cover_file" ] && [ -f "$cover_file" ]; then
+            echo "  ✅ +Cover: $(basename "$fpath")"
+        else
+            echo "  ✅ ID3: $(basename "$fpath")"
+        fi
+    else
+        echo "  ❌ Failed: $(basename "$fpath")"
+    fi
 }
 
+# embed_cover: fpath album_artist album has_cover enhanced_mode orig_album [cover_file] [force_title] [force_artist]
+# 增量写（只覆盖被赋值的字段，其余沿用 yt-dlp --embed-metadata 已写入的原始标签）
 embed_cover() {
-    python3 - "$@" << 'PYEOF'
-import sys, os, re, base64
+    local fpath="$1" aa="$2" an="$3" hc="$4" em="$5" oa="$6" cf="${7:-}" ft="${8:-}" fa="${9:-}"
+    local base artist_part artists_str="" final_album kv=() cover_arg=""
 
-def split_artists(artist_str):
-    if not artist_str:
-        return ['Unknown Artist']
-    artist_str = artist_str.replace('\uff0c', ',')
-    patterns = [r'\s+feat\.\s+', r'\s+ft\.\s+', r'\s+&\s+', r'\s*,\s*', r'\s+with\s+', r'\s+vs\.\s+']
-    result = [artist_str]
-    for pattern in patterns:
-        new_result = []
-        for item in result:
-            parts = re.split(pattern, item, flags=re.IGNORECASE)
-            new_result.extend([p.strip() for p in parts if p.strip()])
-        result = new_result
-    seen = set()
-    unique = []
-    for a in result:
-        if a and a not in seen and a.lower() not in seen:
-            seen.add(a.lower())
-            unique.append(a)
-    return unique if unique else ['Unknown Artist']
+    base="$(basename "$fpath")"
+    if [[ "$base" == *" - "* ]]; then
+        artist_part="${base%% - *}"
+        if [ -n "$artist_part" ] && [ "$artist_part" != "NA" ]; then
+            artists_str=$(mf_artists_joined "$artist_part")
+        fi
+    fi
+    # v3.4/v4.0: 无元数据曲目按 title 首个 " - " 拆分出的强制歌名/歌手（优先级高于文件名提取）
+    [ -n "$fa" ] && artists_str=$(mf_artists_joined "$fa")
 
-fpath = sys.argv[1]; aa = sys.argv[2]; an = sys.argv[3]
-hc = sys.argv[4]; em = sys.argv[5]; oa = sys.argv[6]; cf = sys.argv[7] if len(sys.argv) > 7 else ""
-# v3.4: 无元数据曲目按 title 首个 " - " 拆分出的强制歌名/歌手（优先级高于文件名提取）
-ft = sys.argv[8] if len(sys.argv) > 8 else ''
-fa = sys.argv[9] if len(sys.argv) > 9 else ''
+    if [ "$em" = "true" ] && [ -n "$oa" ] && [ "$oa" != "None" ] && [[ "$oa" != %* ]]; then
+        final_album="$oa"
+    else
+        final_album="$an"
+    fi
 
-basename = os.path.basename(fpath)
-artist_from_file = None
-if ' - ' in basename:
-    artist_part = basename.split(' - ')[0]
-    if artist_part and artist_part != 'NA':
-        artists_list = split_artists(artist_part)
-    else:
-        artists_list = []
-else:
-    artists_list = []
-if fa:
-    artists_list = split_artists(fa)
+    if [ -n "$aa" ] && [ "$aa" != "None" ] && [ "$aa" != "SKIP" ]; then
+        kv+=("album_artist=$aa")
+    else
+        kv+=("album_artist=")
+    fi
+    [ -n "$artists_str" ] && kv+=("artist=$artists_str")
+    [ -n "$ft" ] && kv+=("title=$ft")
+    kv+=("album=$final_album")
+    [ "$em" = "true" ] && kv+=("track=")
 
-try:
-    if fpath.endswith('.m4a'):
-        from mutagen.mp4 import MP4, MP4Cover
-        audio = MP4(fpath)
-        if aa and aa not in ('None','SKIP',''): audio['aART'] = [aa]
-        elif 'aART' in audio: del audio['aART']
-        if artists_list:
-            audio['\xa9ART'] = artists_list
-        if ft: audio['\xa9nam'] = [ft]
-        if em=='true' and oa and oa!='None' and not oa.startswith('%'): audio['\xa9alb'] = [oa]
-        else: audio['\xa9alb'] = [an]
-        if em=='true' and 'trkn' in audio: del audio['trkn']
-        if hc=='true' and cf and os.path.exists(cf):
-            with open(cf,'rb') as img: audio['covr'] = [MP4Cover(img.read(), imageformat=MP4Cover.FORMAT_JPEG)]
-            print(f'  +Cover: {os.path.basename(fpath)}')
-        else:
-            print(f'  ID3: {os.path.basename(fpath)}')
-        audio.save()
-    else:
-        from mutagen.oggopus import OggOpus
-        from mutagen.flac import Picture
-        audio = OggOpus(fpath)
-        if aa and aa not in ('None','SKIP',''): audio['ALBUMARTIST'] = [aa]
-        elif 'ALBUMARTIST' in audio: del audio['ALBUMARTIST']
-        if artists_list:
-            audio['artist'] = artists_list
-        if ft: audio['title'] = [ft]
-        if em=='true' and oa and oa!='None' and not oa.startswith('%'): audio['album'] = [oa]
-        else: audio['album'] = [an]
-        if em=='true' and 'tracknumber' in audio: del audio['tracknumber']
-        if hc=='true' and cf and os.path.exists(cf):
-            with open(cf,'rb') as img:
-                pic=Picture(); pic.data=img.read(); pic.type=3; pic.mime='image/jpeg'
-                audio['metadata_block_picture'] = [base64.b64encode(pic.write()).decode('ascii')]
-            print(f'  +Cover: {os.path.basename(fpath)}')
-        else:
-            print(f'  ID3: {os.path.basename(fpath)}')
-        audio.save()
-except Exception as e:
-    print(f'  Failed: {os.path.basename(fpath)} - {e}')
-PYEOF
+    [ "$hc" = "true" ] && [ -n "$cf" ] && [ -f "$cf" ] && cover_arg="$cf"
+
+    if mf_ffmpeg_apply "$fpath" "$cover_arg" "${kv[@]}"; then
+        if [ -n "$cover_arg" ]; then
+            echo "  ✅ +Cover: $(basename "$fpath")"
+        else
+            echo "  ✅ ID3: $(basename "$fpath")"
+        fi
+    else
+        echo "  ❌ Failed: $(basename "$fpath")"
+    fi
 }
 
 get_cover_url() {
-    python3 -c "
-import json, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-thumbs = sorted(d.get('thumbnails',[]), key=lambda x: x.get('width',0)*x.get('height',0), reverse=True)
-if thumbs: print(thumbs[0]['url'])
-" "$1" 2>/dev/null
+    jq -r '(.thumbnails // []) | sort_by((.width // 0) * (.height // 0)) | last | .url // empty' "$1" 2>/dev/null
+}
+
+download_cover() {
+    local json_file="$1" out_var="$2"
+    local url=""
+    url=$(get_cover_url "$json_file")
+    if [ -n "$url" ]; then
+        if ! command -v curl &>/dev/null; then
+            echo "  curl not found, cannot download cover" >&2
+            return 1
+        fi
+        local tmp="/tmp/cover_$$.jpg"
+        curl -sL "$url" -o "$tmp" 2>/dev/null
+        if [ -f "$tmp" ] && [ "$(file_size "$tmp" 2>/dev/null)" -gt 10240 ]; then
+            eval "$out_var=$tmp"
+            return 0
+        fi
+    fi
+    return 1
 }
 
 download_cover() {
@@ -963,15 +1114,10 @@ WORKEREOF
     # token 替换
     # ─────────────────────────────────────────────
     replace_token() {
-        python3 - "$WORKER_SH" "$1" "$2" << 'PYEOF'
-import sys
-path, token, value = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, 'r', encoding='utf-8') as f:
-    data = f.read()
-data = data.replace(token, value)
-with open(path, 'w', encoding='utf-8') as f:
-    f.write(data)
-PYEOF
+        local token="$1" value="$2" content
+        content="$(cat "$WORKER_SH")"
+        content="${content//$token/$value}"
+        printf '%s\n' "$content" > "$WORKER_SH"
     }
 
     replace_token "__YTDLP__" "$MF_YTDLP"
@@ -1067,7 +1213,7 @@ for album_entry in "${ALBUMS[@]}"; do
             --parse-metadata "%(playlist_index)s:%(track_number)s" --write-info-json \
             "${FORMAT_ARGS[@]}" \
             "${PLAYLIST_ARGS[@]}" \
-            -o "%(artist,uploader)s - %(title)s.%(ext)s" -P "$FINAL_PATH" "$url"
+            -o "%(artist,uploader).50s - %(title).25s.%(ext)s" -P "$FINAL_PATH" "$url"
 
     else
         if [ -n "$NORMAL_SELECTION" ]; then
@@ -1077,7 +1223,7 @@ for album_entry in "${ALBUMS[@]}"; do
                 --parse-metadata "%(playlist_index)s:%(track_number)s" --write-info-json \
                 "${FORMAT_ARGS[@]}" \
                 --playlist-items "$NORMAL_SELECTION" \
-                -o "%(artist,uploader)s - %(title)s.%(ext)s" -P "$FINAL_PATH" "$url"
+                -o "%(artist,uploader).50s - %(title).25s.%(ext)s" -P "$FINAL_PATH" "$url"
         fi
 
         if [ -n "$MV_VIDS" ] && [ "$MV_STRATEGY" = "1" ]; then
@@ -1100,7 +1246,7 @@ for album_entry in "${ALBUMS[@]}"; do
                 --embed-metadata --no-embed-thumbnail --windows-filenames --yes-playlist \
                 --parse-metadata "%(playlist_index)s:%(track_number)s" --write-info-json \
                 "${FORMAT_ARGS[@]}" "${PLAYLIST_ARGS[@]}" \
-                -o "%(artist,uploader)s - %(title)s.%(ext)s" -P "$FINAL_PATH" "$url"
+                -o "%(artist,uploader).50s - %(title).25s.%(ext)s" -P "$FINAL_PATH" "$url"
         fi
     fi
 
@@ -1114,7 +1260,13 @@ for album_entry in "${ALBUMS[@]}"; do
             SAFE_TITLE=$(echo "$MV_TITLE" | sed 's/[\/:*?"<>|]/-/g')
             NEW_NAME="${SAFE_ARTIST} - ${SAFE_TITLE}.$AUDIO_EXT"
             NEW_PATH="$FINAL_PATH/$NEW_NAME"
-            [ -f "$NEW_PATH" ] && NEW_PATH="$FINAL_PATH/${SAFE_ARTIST} - ${SAFE_TITLE}_$(date +%s).$AUDIO_EXT"
+            # v4.1: 目标已存在 → 去重（丢弃新副本），保证重复任务幂等
+            if [ -f "$NEW_PATH" ]; then
+                rm -f "$mv_f"
+                log "Duplicate: exists $NEW_NAME, new copy removed" "info" "dedupe"
+                echo "$NEW_PATH" >> /tmp/existing_before_$$.txt
+                continue
+            fi
             mv "$mv_f" "$NEW_PATH"
             log "Renamed: $(basename "$mv_f") -> $NEW_NAME" "info" "rename"
             CF=""; JSON_FILE="${NEW_PATH%.$AUDIO_EXT}.info.json"
@@ -1151,15 +1303,15 @@ for album_entry in "${ALBUMS[@]}"; do
             JSON_FILE="${f%.$AUDIO_EXT}.info.json"
             TITLE=""; SA=""; REAL_ALBUM=""; HS=false; FORCE_TITLE=""; FORCE_ARTIST=""
             if [ -f "$JSON_FILE" ]; then
-                TITLE=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('title',''))" "$JSON_FILE" 2>/dev/null)
-                SA=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('artist',''))" "$JSON_FILE" 2>/dev/null)
-                REAL_ALBUM=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('album',''))" "$JSON_FILE" 2>/dev/null)
+                TITLE=$(jq -r '.title // ""' "$JSON_FILE" 2>/dev/null)
+                SA=$(jq -r '.artist // ""' "$JSON_FILE" 2>/dev/null)
+                REAL_ALBUM=$(jq -r '.album // ""' "$JSON_FILE" 2>/dev/null)
                 [ -n "$TITLE" ] && [ -n "$SA" ] && HS=true
             fi
             # v4.3: 电台/社区列表无元数据曲目 —— 新提取算法
             # （uploader 匹配 → 盲猜 → 书名号/括号规则，extract_nm_info 见 mf_lib.sh）
             if [ "$TYPE" = "ytm_radio" ] && [ "$HS" != "true" ] && [ -f "$JSON_FILE" ]; then
-                NM_UP=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('uploader',''))" "$JSON_FILE" 2>/dev/null)
+                NM_UP=$(jq -r '.uploader // ""' "$JSON_FILE" 2>/dev/null)
                 NM_INFO=$(extract_nm_info "$TITLE" "$NM_UP")
                 FORCE_TITLE=$(printf '%s' "$NM_INFO" | cut -d'|' -f1)
                 FORCE_ARTIST=$(printf '%s' "$NM_INFO" | cut -d'|' -f2)
@@ -1217,17 +1369,17 @@ for album_entry in "${ALBUMS[@]}"; do
             [ -f "$mv_f" ] || continue
             JSON_FILE="${mv_f%.$AUDIO_EXT}.info.json"
             VID=""
-            [ -f "$JSON_FILE" ] && VID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id',''))" "$JSON_FILE" 2>/dev/null)
+            [ -f "$JSON_FILE" ] && VID=$(jq -r '.id // ""' "$JSON_FILE" 2>/dev/null)
             if [ -n "$VID" ] && [ -n "${MV_DATA[$VID]}" ]; then
                 IFS='|' read -r TITLE ARTIST ALBUM <<< "${MV_DATA[$VID]}"
                 # v4.3: 预览误判安全网 —— info.json 有完整 artist+album 的曲目优先走 meta
                 #（预览 hasMeta 是启发式，歌手频道上传的音频版本可能漏判为 MV）
                 HS_META="false"
                 if [ -f "$JSON_FILE" ]; then
-                    M_SA=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('artist',''))" "$JSON_FILE" 2>/dev/null)
-                    M_AL=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('album',''))" "$JSON_FILE" 2>/dev/null)
-                    M_TI=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('title',''))" "$JSON_FILE" 2>/dev/null)
-                    M_TR=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('track',''))" "$JSON_FILE" 2>/dev/null)
+                    M_SA=$(jq -r '.artist // ""' "$JSON_FILE" 2>/dev/null)
+                    M_AL=$(jq -r '.album // ""' "$JSON_FILE" 2>/dev/null)
+                    M_TI=$(jq -r '.title // ""' "$JSON_FILE" 2>/dev/null)
+                    M_TR=$(jq -r '.track // ""' "$JSON_FILE" 2>/dev/null)
                     [ -n "$M_SA" ] && [ -n "$M_AL" ] && HS_META="true"
                 fi
                 if [ "$HS_META" = "true" ]; then
@@ -1284,15 +1436,15 @@ for album_entry in "${ALBUMS[@]}"; do
         if [ "$ENHANCED_MODE" = "true" ]; then
             JSON_FILE="${f%.$AUDIO_EXT}.info.json"
             if [ -f "$JSON_FILE" ]; then
-                ORIG_ALBUM=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('album',''))" "$JSON_FILE" 2>/dev/null)
-                SA=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('artist',''))" "$JSON_FILE" 2>/dev/null)
+                ORIG_ALBUM=$(jq -r '.album // ""' "$JSON_FILE" 2>/dev/null)
+                SA=$(jq -r '.artist // ""' "$JSON_FILE" 2>/dev/null)
                 HS=false
                 [ -n "$ORIG_ALBUM" ] && [ -n "$SA" ] && HS=true
                 log "Metadata: $HS" "info" "metadata_check"
                 # v4.3: 电台/社区列表无元数据曲目 —— 新提取算法（extract_nm_info，同 postproc_default）
                 if [ "$TYPE" = "ytm_radio" ] && [ "$HS" != true ]; then
-                    TITLE_RAW=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('title',''))" "$JSON_FILE" 2>/dev/null)
-                    NM_UP=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('uploader',''))" "$JSON_FILE" 2>/dev/null)
+                    TITLE_RAW=$(jq -r '.title // ""' "$JSON_FILE" 2>/dev/null)
+                    NM_UP=$(jq -r '.uploader // ""' "$JSON_FILE" 2>/dev/null)
                     NM_INFO=$(extract_nm_info "$TITLE_RAW" "$NM_UP")
                     FORCE_TITLE=$(printf '%s' "$NM_INFO" | cut -d'|' -f1)
                     FORCE_ARTIST=$(printf '%s' "$NM_INFO" | cut -d'|' -f2)

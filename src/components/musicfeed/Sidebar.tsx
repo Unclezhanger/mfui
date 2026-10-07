@@ -69,7 +69,7 @@ export function Sidebar() {
               rel="noreferrer"
               className="hover:text-foreground hover:underline"
             >
-              {t('内核')} v3.5.2
+              {t('内核')} v4.1
             </a>
           </span>
         </div>

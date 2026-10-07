@@ -140,7 +140,8 @@ parse_track_selection() {
     input=$(fullwidth_to_halfwidth "$input")
     IFS=',' read -ra parts <<< "$input"
     for part in "${parts[@]}"; do
-        part=$(echo "$part" | xargs)
+        part="${part#"${part%%[![:space:]]*}"}"   # 去前导空白（不要用 xargs：它会解释引号/反斜杠）
+        part="${part%"${part##*[![:space:]]}"}"   # 去尾随空白
         [ -z "$part" ] && continue
         if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
             start=${BASH_REMATCH[1]}; end=${BASH_REMATCH[2]}
@@ -153,7 +154,10 @@ parse_track_selection() {
             [ "$part" -ge 1 ] && [ "$part" -le "$max" ] && { [ -n "$result" ] && result="$result,$part" || result="$part"; } || { echo "INVALID:$part"; return 1; }
         else echo "INVALID:$part"; return 1; fi
     done
-    [ -z "$result" ] && echo "ALL" || echo "$result"
+    # 调用方（ui_checklist / ui_pick_tracks）已把"回车/a = 全选"转成显式 ALL；
+    # 走到这里 result 为空只可能是解析失败（如孤立引号），不能当成全选。
+    [ -z "$result" ] && { echo "INVALID:empty"; return 1; }
+    echo "$result"
 }
 
 # ─────────────────────────────────────────────
@@ -188,75 +192,164 @@ extract_song_info() {
 #      其余去壳留内容（外层自然剥除，如《K歌之王(國)》→ K歌之王(國)）
 #   3) 无书名号：按 " - " 分段，uploader 与某段互相包含 → 该段为歌手；
 #      匹配不上盲猜左段为歌手；纯歌名 → 歌手 fallback uploader
+# v4.0: 从 python3 正则迁移到纯 bash + grep -E + sed（不依赖任何脚本语言运行时），
+# 已用原始 python 实现跑过 20+ 组覆盖全分支的真实/边界标题逐字节比对验证一致
+MF_POLL_RE='歌詞|歌词|動態|动态|MV|Official|官方|Video|Audio|Visualizer|Live|完整版|主題曲|主题曲|片尾曲|片頭曲|片头曲'
+MF_KEEP_RE='feat|ft\.|国|國|粤|粵'
+MF_BR_RE='（[^（）()]*）|\([^()]*\)|『[^『』]*』|「[^「」]*」|【[^【】]*】|《[^《》]*》|\[[^][]*\]'
+
+mf_poll_match() { grep -qiE "$MF_POLL_RE" <<< "$1"; }
+mf_keep_match() { grep -qiE "$MF_KEEP_RE" <<< "$1"; }
+
+# 单层去壳：一次左到右扫描替换全部括号组（等价 python re.sub 一次调用）
+mf_br_proc_once() {
+    local remaining="$1" result="" match before after inner flat
+    while :; do
+        match=$(grep -oE "$MF_BR_RE" <<< "$remaining" | head -1)
+        [ -z "$match" ] && { result+="$remaining"; break; }
+        before="${remaining%%"$match"*}"
+        after="${remaining#*"$match"}"
+        inner=$(sed -E 's/^.(.*).$/\1/' <<< "$match")
+        flat=$(sed -E "s/$MF_BR_RE/ /g" <<< "$inner")
+        if mf_poll_match "$flat"; then
+            result+="$before"
+        elif mf_keep_match "$flat"; then
+            result+="$before$match"
+        else
+            result+="$before$inner"
+        fi
+        remaining="$after"
+    done
+    printf '%s' "$result"
+}
+
+# 反复迭代到不动点（等价 python while prev != s 外层循环）
+mf_br_proc() {
+    local prev cur="$1"
+    while :; do
+        prev="$cur"
+        cur=$(mf_br_proc_once "$prev")
+        [ "$cur" = "$prev" ] && break
+    done
+    printf '%s' "$cur"
+}
+
+mf_clean() {
+    local s
+    s=$(sed -E 's/[[:space:]]*-[[:space:]]*$//' <<< "$1")
+    s=$(sed -E 's/[[:space:]]{2,}/ /g' <<< "$s")
+    s=$(sed -E 's/^[ -]+//; s/[ -]+$//' <<< "$s")
+    printf '%s' "$s"
+}
+
+mf_esc() { printf '%s' "${1//|/｜}"; }
+
+# 书名号优先匹配：《》→【】→[ ]，返回第一个命中的括号内容 + 之前的文字
+mf_bracket_priority_match() {
+    local t="$1" pat m inner
+    for pat in '《[^《》]*》' '【[^【】]*】' '\[[^][]*\]'; do
+        m=$(grep -oE "$pat" <<< "$t" | head -1)
+        if [ -n "$m" ]; then
+            inner=$(sed -E 's/^.(.*).$/\1/' <<< "$m")
+            BR1_INNER="$inner"
+            BR1_PREFIX="${t%%"$m"*}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 extract_nm_info() {
-    python3 - "$1" "$2" << 'NM_PYEOF'
-import re, sys
+    local title_raw="$1" up_raw="$2"
+    local up t song artist prefix flat_song t2 plen
+    local -a segs=() segs_raw=() keep=()
+    local seg trimmed i joined
 
-POLL = re.compile(r'歌詞|歌词|動態|动态|MV|Official|官方|Video|Audio|Visualizer|Live|完整版|主題曲|主题曲|片尾曲|片頭曲|片头曲', re.I)
-KEEP = re.compile(r'feat|ft\.|国|國|粤|粵', re.I)
-BR = re.compile(r'（([^（）()]*)）|\(([^()]*)\)|『([^『』]*)』|「([^「」]*)」|【([^【】]*)】|《([^《》]*)》|\[([^\[\]]*)\]')
+    up=$(sed -E 's/[[:space:]]*-[[:space:]]*Topic[[:space:]]*$//' <<< "$up_raw")
+    up=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$up")
 
-def inner_of(m):
-    return next(g for g in m.groups() if g is not None)
+    t=$(sed 's/–/-/g; s/—/-/g' <<< "$title_raw")
 
-def br_proc(s):
-    # 逐层（最内层优先）迭代：污染词连符号删；白名单层整体保留；
-    # 其余去壳留内容。嵌套判定只看本层自身文字（剥离内层括号后再匹配）
-    prev = None
-    while prev != s:
-        prev = s
-        def repl(m):
-            inner = inner_of(m)
-            flat = BR.sub(' ', inner)
-            if POLL.search(flat):
-                return ''
-            if KEEP.search(flat):
-                return m.group(0)
-            return inner
-        s = BR.sub(repl, s)
-    return s
+    # 0) 方括号全量扫描（v4.1）：按出现顺序取第一个「内容未污染、且前缀非空 ≤30 字」
+    #    的 [ 歌名 ] 组为歌名，前缀为歌手。厂牌官方 MV 的惯例是「歌手 [ 歌名 ] Official MV」，
+    #    而片尾署名括号（影集《劇名》插曲之类）前面拖着长前缀，会被 30 字上限自然排除。
+    #    只扫 [ ]：圆括号/书名号/【】更多承担署名、feat、纯享标签等角色，仍走原有优先级。
+    #    扫描不中（如括号组在标题开头、无歌手前缀）则落入原有书名号优先逻辑。
+    local bm inner2 pre2 flat2
+    while IFS= read -r bm; do
+        [ -z "$bm" ] && continue
+        inner2=$(sed -E 's/^.(.*).$/\1/' <<< "$bm")
+        song=$(mf_br_proc "$inner2")
+        song=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$song")
+        flat2=$(sed -E "s/$MF_BR_RE/ /g" <<< "$song")
+        if [ -z "$song" ] || mf_poll_match "$flat2"; then continue; fi
+        pre2="${t%%"$bm"*}"
+        [ -z "$pre2" ] && continue
+        pre2=$(sed -E 's/^(\[[^]]*\][[:space:]]*)+//' <<< "$pre2")
+        pre2=$(sed -E 's/[[:space:]:：*|｜-]+$//' <<< "$pre2")
+        pre2=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$pre2")
+        plen=$(printf '%s' "$pre2" | wc -m)
+        if [ -n "$pre2" ] && [ "$plen" -le 30 ]; then
+            echo "$(mf_esc "$song")|$(mf_esc "$pre2")"
+            return 0
+        fi
+    done < <(grep -oE '\[[^][]*\]' <<< "$t")
 
-def clean(s):
-    s = re.sub(r'\s*-\s*$', '', s)
-    s = re.sub(r'\s{2,}', ' ', s)
-    return s.strip(' -').strip()
+    # 1) 书名号优先（内容被污染词清空时视为无书名号，继续走后面分支）
+    if mf_bracket_priority_match "$t"; then
+        song=$(mf_br_proc "$BR1_INNER")
+        song=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$song")
+        flat_song=$(sed -E "s/$MF_BR_RE/ /g" <<< "$song")
+        if [ -n "$song" ] && ! mf_poll_match "$flat_song"; then
+            prefix=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$BR1_PREFIX")
+            prefix=$(sed -E 's/^(\[[^]]*\][[:space:]]*)+//' <<< "$prefix")
+            prefix=$(sed -E 's/[[:space:]:：*|｜-]+$//' <<< "$prefix")
+            prefix=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$prefix")
+            plen=$(printf '%s' "$prefix" | wc -m)
+            if [ -n "$prefix" ] && [ "$plen" -le 30 ]; then
+                artist="$prefix"
+            else
+                artist="$up"
+            fi
+            echo "$(mf_esc "$song")|$(mf_esc "$artist")"
+            return 0
+        fi
+    fi
 
-def esc(s):
-    return (s or '').replace('|', '｜')
+    # 2) 无书名号：括号清洗后按 " - " 分段
+    t2=$(mf_br_proc "$t")
+    local delim=$'\x01' t2_delim
+    t2_delim="${t2// - /$delim}"
+    local oldIFS="$IFS"; IFS="$delim"; read -ra segs_raw <<< "$t2_delim"; IFS="$oldIFS"
+    for seg in "${segs_raw[@]}"; do
+        trimmed=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "$seg")
+        [ -n "$trimmed" ] && segs+=("$trimmed")
+    done
 
-title = sys.argv[1] or ''
-up = re.sub(r'\s*-\s*Topic\s*$', '', sys.argv[2] or '').strip()
-t = title.replace('–', '-').replace('—', '-')
+    if [ "${#segs[@]}" -ge 2 ]; then
+        if [ -n "$up" ]; then
+            keep=()
+            for seg in "${segs[@]}"; do
+                if [[ "$up" == *"$seg"* || "$seg" == *"$up"* ]]; then
+                    continue
+                fi
+                keep+=("$seg")
+            done
+            if [ "${#keep[@]}" -gt 0 ] && [ "${#keep[@]}" -lt "${#segs[@]}" ]; then
+                echo "$(mf_esc "$(mf_clean "${keep[0]}")")|$(mf_esc "$up")"
+                return 0
+            fi
+        fi
+        joined=""
+        for ((i=1; i<${#segs[@]}; i++)); do
+            if [ -z "$joined" ]; then joined="${segs[$i]}"; else joined="$joined - ${segs[$i]}"; fi
+        done
+        echo "$(mf_esc "$(mf_clean "$joined")")|$(mf_esc "${segs[0]}")"
+        return 0
+    fi
 
-# 1) 歌名书名号优先（内容被污染词清空时视为无书名号，继续走后面分支）
-m = re.search(r'《([^《》]*)》', t) or re.search(r'【([^【】]*)】', t) or re.search(r'\[([^\[\]]*)\]', t)
-if m:
-    song = br_proc(m.group(1)).strip()
-    # 括号内容本身（已无括号包裹）也可能整个是污染词（如【動態歌詞】），需再扁平检查
-    if song and not POLL.search(BR.sub(' ', song)):
-        prefix = re.sub(r'^(\[[^\]]*\]\s*)+', '', t[:m.start()].strip())
-        prefix = re.sub(r'[\s\-:：*|｜]+$', '', prefix).strip()
-        # 前缀过长（宣传文案）时歌手 fallback uploader
-        artist = prefix if prefix and len(prefix) <= 30 else up
-        print(f"{esc(song)}|{esc(artist)}")
-        sys.exit(0)
-
-# 2) 无书名号：括号清洗后按 " - " 分段
-t2 = br_proc(t)
-segs = [s.strip() for s in t2.split(' - ') if s.strip()]
-if len(segs) >= 2:
-    if up:
-        keep = [s for s in segs if not (s in up or up in s)]
-        if keep and len(keep) < len(segs):
-            print(f"{esc(clean(keep[0]))}|{esc(up)}")
-            sys.exit(0)
-    # 盲猜：左段为歌手（无法区分 歌手-歌名 / 歌名-歌手，已知局限）
-    print(f"{esc(clean(' - '.join(segs[1:])))}|{esc(segs[0])}")
-    sys.exit(0)
-
-# 3) 纯歌名
-print(f"{esc(clean(t2))}|{esc(up)}")
-NM_PYEOF
+    # 3) 纯歌名
+    echo "$(mf_esc "$(mf_clean "$t2")")|$(mf_esc "$up")"
 }
 
 # ─────────────────────────────────────────────
@@ -274,22 +367,27 @@ get_album_info() {
         echo "Unknown Album"; echo "0"; echo "Unknown Artist"
         rm -f "$tmp_json"; return
     fi
-    python3 - "$tmp_json" << 'PYEOF'
-import json, re, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-raw = d.get('title', '') or ''
-album = re.sub(r'^.+? - ', '', raw).strip().replace('|', '｜') or 'Unknown Album'
-count = d.get('playlist_count', 0)
-artist = 'Unknown Artist'
-entries = d.get('entries', [])
-if entries:
-    artist = re.sub(r' - Topic$', '', entries[0].get('uploader', '')).strip().replace('|', '｜') or 'Unknown Artist'
-print(album); print(count); print(artist)
-for idx, e in enumerate(entries, 1):
-    t = re.sub(r'^.+? - ', '', e.get('title', 'Unknown')).replace('|', '｜')
-    print(f"{idx}. {t}")
-PYEOF
+    local raw album count artist idx=0 line title
+    raw=$(jq -r '.title // ""' "$tmp_json")
+    # 去掉形如 "Artist - " 的首个前缀（非贪婪语义：用 bash 最短前缀截断实现，等价于原 re.sub(r'^.+? - ','')）
+    album="${raw#*" - "}"
+    album="$(printf '%s' "$album" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/|/｜/g')"
+    [ -z "$album" ] && album="Unknown Album"
+    count=$(jq -r '.playlist_count // 0' "$tmp_json")
+    artist=$(jq -r '(.entries[0].uploader // "")' "$tmp_json")
+    artist="${artist%" - Topic"}"
+    artist="$(printf '%s' "$artist" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/|/｜/g')"
+    [ -z "$artist" ] && artist="Unknown Artist"
+    echo "$album"; echo "$count"; echo "$artist"
+    while IFS= read -r line; do
+        idx=$((idx+1))
+        title="${line#*" - "}"
+        title="${title//|/｜}"
+        echo "${idx}. ${title}"
+    # v4.0.4: 之前 '.entries[]?.title // "Unknown"' 在 entries 为空数组时，因 jq 的
+    # 替代运算符优先级，整表达式落到 "Unknown"，凭空多出一行幽灵曲目 "1. Unknown"；
+    # 加管道后 // 只作用于单条 entry，空数组即零行输出
+    done < <(jq -r '.entries[]? | (.title // "Unknown")' "$tmp_json")
     rm -f "$tmp_json"
 }
 
@@ -305,28 +403,35 @@ get_playlist_info() {
         echo "Unknown Playlist"; echo "0"
         rm -f "$tmp_json"; return
     fi
-    python3 - "$tmp_json" << 'PYEOF'
-import json, re, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-playlist = d.get('title', '').strip().replace('|', '｜') or 'Unknown Playlist'
-count = d.get('playlist_count', 0)
-print(playlist); print(count)
-entries = d.get('entries', [])
-for idx, e in enumerate(entries, 1):
-    if e is None:
-        print(f"{idx}. [unavailable]||False"); continue
-    title = e.get('title') or f'Track {idx}'
-    title = title.replace('|', '｜')
-    vid = e.get('id', '')
-    uploader_raw = e.get('uploader') or e.get('channel') or ''
-    # v4.3: flat-playlist 看不到 album/artist，但 " - Topic"（YTM 歌手自动频道）
-    # 的曲目下载时 info.json 必带完整 meta——预览阶段按 Topic 预判 has_meta
-    is_topic = ' - Topic' in uploader_raw
-    has_meta = 'True' if (e.get('album') or e.get('artist') or is_topic) else 'False'
-    uploader = re.sub(r' - Topic$', '', uploader_raw).strip().replace('|', '｜')
-    print(f"{idx}. {title}|{vid}|{has_meta}|{uploader}")
-PYEOF
+    local playlist count idx=0 title vid uploader_raw has_album has_artist is_topic has_meta uploader
+    playlist=$(jq -r '.title // ""' "$tmp_json")
+    playlist="$(printf '%s' "$playlist" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/|/｜/g')"
+    [ -z "$playlist" ] && playlist="Unknown Playlist"
+    count=$(jq -r '.playlist_count // 0' "$tmp_json")
+    echo "$playlist"; echo "$count"
+    # 每条 entry 一行 TSV：title \t id \t uploader/channel \t album \t artist；entry 为 null 时首字段标记 NULL
+    # v4.0.4: tab 属于 IFS 空白字符，连续 tab 会被折叠成单个分隔符——空字段丢失导致
+    # uploader/album/artist 字段整体左移（实测 uploader 为空时 uploader 读到 album 的值，
+    # has_meta 误判为 False）。改用单元分隔符 \x1f（非空白，逐个精确分列）；@tsv 输出
+    # 里的真实 tab 由 sed 统一转成 \x1f，@tsv 对值内 \t/\n/\\ 的转义语义保持不变
+    while IFS=$'\x1f' read -r title vid uploader_raw has_album has_artist; do
+        idx=$((idx+1))
+        if [ "$title" = "NULL" ] && [ -z "$vid" ]; then
+            echo "${idx}. [unavailable]||False"
+            continue
+        fi
+        [ -z "$title" ] && title="Track $idx"
+        title="${title//|/｜}"
+        # v4.3: flat-playlist 看不到 album/artist，但 " - Topic"（YTM 歌手自动频道）
+        # 的曲目下载时 info.json 必带完整 meta——预览阶段按 Topic 预判 has_meta
+        is_topic=0
+        [[ "$uploader_raw" == *" - Topic"* ]] && is_topic=1
+        has_meta="False"
+        if [ -n "$has_album" ] || [ -n "$has_artist" ] || [ "$is_topic" -eq 1 ]; then has_meta="True"; fi
+        uploader="${uploader_raw%" - Topic"}"
+        uploader="$(printf '%s' "$uploader" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/|/｜/g')"
+        echo "${idx}. ${title}|${vid}|${has_meta}|${uploader}"
+    done < <(jq -r '.entries[] | if . == null then "NULL\t\t\t\t" else ([(.title // ""), (.id // ""), ((.uploader // .channel) // ""), (.album // ""), (.artist // "")] | @tsv) end' "$tmp_json" | sed $'s/\t/\x1f/g')
     rm -f "$tmp_json"
 }
 
@@ -334,6 +439,10 @@ PYEOF
 # stdout 5 行：album / title / artist / uploader / has_metadata(bool)
 get_single_info() {
     local url="$1"
+    # 剥离 &list= 参数：watch?v=X&list=RD… 的 Mix/Radio 形态会让 yt-dlp
+    # 展开整个播放列表（逐条 info.json，数百条，preview 长时间挂起）；
+    # single 语义只取当前视频
+    [[ "$url" == *"&list="* ]] && url="${url%%&list=*}"
     tmp_json="/tmp/ytm_single_$$"
     CLEANUP_FILES+=("${tmp_json}.info.json" "$tmp_json")
     "$MF_YTDLP" $MF_NODE_ARGS --write-info-json --skip-download -o "$tmp_json" "$url" >/dev/null 2>&1
@@ -342,17 +451,13 @@ get_single_info() {
         echo "Unknown"; echo "1"; echo ""; echo ""; echo "False"
         rm -f "$tmp_json" "$json_file" 2>/dev/null; return
     fi
-    python3 - "$json_file" << 'PYEOF'
-import json, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-album = d.get('album', '') or ''
-title = d.get('title', 'Unknown')
-artist = d.get('artist', '') or ''
-uploader = d.get('uploader', '') or ''
-has_metadata = bool(artist and album)
-print(album); print(title); print(artist); print(uploader); print(has_metadata)
-PYEOF
+    local album title artist uploader has_metadata
+    album=$(jq -r '.album // ""' "$json_file")
+    title=$(jq -r '.title // "Unknown"' "$json_file")
+    artist=$(jq -r '.artist // ""' "$json_file")
+    uploader=$(jq -r '.uploader // ""' "$json_file")
+    if [ -n "$artist" ] && [ -n "$album" ]; then has_metadata="True"; else has_metadata="False"; fi
+    echo "$album"; echo "$title"; echo "$artist"; echo "$uploader"; echo "$has_metadata"
     rm -f "$tmp_json" "$json_file" 2>/dev/null
 }
 
@@ -531,12 +636,17 @@ ui_confirm() {
     else
         ask "$title [y/N/b]: " "$title [y/N/b]: "
     fi
-    _ui_readline yn
-    case "$yn" in
-        b|B) return 255 ;;
-        n|N) return 1 ;;
-        *) return 0 ;;
-    esac
+    # v4.1: 回车 = 显示的默认值（旧实现任意输入/回车一律算"是"）；非法输入重问
+    while :; do
+        _ui_readline yn
+        case "$yn" in
+            "") [ "$def" = "y" ] && return 0 || return 1 ;;
+            b|B) return 255 ;;
+            y|Y) return 0 ;;
+            n|N) return 1 ;;
+            *) echo "$(is_en && echo '  Please answer y / n / b' || echo '  请输入 y / n / b')" ;;
+        esac
+    done
 }
 
 # ── 自由文本输入 ─────────────────────────────
@@ -551,10 +661,21 @@ ui_input() {
         echo "$v"; return 0
     fi
     if [ -n "$prompt" ]; then printf '\033[2m🎬 %s\033[0m\n' "$prompt" >&2; fi
-    if is_en; then printf '%s \033[2m[%s] (< = back)\033[0m: ' "$title" "$def" >&2
-    else printf '%s \033[2m[%s]（< = 返回上一步）\033[0m: ' "$title" "$def" >&2; fi
-    local v2
-    _ui_readline v2
+    local v2 pp
+    if ( : < /dev/tty ) 2>/dev/null; then
+        # v4.1: 自由文本改用 readline（read -e）——普通 read 的行编辑交给内核 tty，
+        # 其退格擦除按字节处理、不认中日韩字符的显示宽度，退格修改中文会列数错位
+        # 出乱码甚至撕出半个字符。readline 按字符+宽度编辑，根治。
+        # \001/\002 是 readline 的提示串忽略标记，让宽度计算跳过 ANSI 色码
+        # （printf -v 让 \001/\033 成为真实控制字节，双引号里它们只是字面文本）
+        if is_en; then printf -v pp '%s \001\033[2m\002[%s] (< = back)\001\033[0m\002: ' "$title" "$def"
+        else printf -v pp '%s \001\033[2m\002[%s]（< = 返回上一步）\001\033[0m\002: ' "$title" "$def"; fi
+        IFS= read -r -e -p "$pp" v2 < /dev/tty
+    else
+        if is_en; then printf '%s \033[2m[%s] (< = back)\033[0m: ' "$title" "$def" >&2
+        else printf '%s \033[2m[%s]（< = 返回上一步）\033[0m: ' "$title" "$def" >&2; fi
+        IFS= read -r v2
+    fi
     if [ "$v2" = "<" ] || [ "$v2" = "b" ]; then return 255; fi
     [ -z "$v2" ] && v2="$def"
     echo "$v2"
@@ -608,20 +729,26 @@ ui_checklist() {
             res=$(whiptail "${args[@]}" "${MF_WT_COMMON[@]}" 3>&1 1>&2 2>&3)
             [ $? -ne 0 ] && return 255
             # checklist 输出形如: "ALL" "1" "3" —— 剥引号后逐 tag 判断
-            if printf '%s\n' "$res" | tr ' ' '\n' | tr -d '"' | grep -qx 'ALL'; then
+            # v4.0.2 修复：ALL 默认预勾选，用户勾了具体曲目却忘记取消 ALL 时，
+            # 原逻辑一律优先 ALL 导致"选了几首却下载全部"。现在只要有具体曲目
+            # 被勾选，一律以具体选择为准，ALL 仅在没有任何单曲被勾选时生效
+            s=""; c=0; has_all=0
+            for t in $(printf '%s' "$res" | tr -d '"'); do
+                if [ "$t" = "ALL" ]; then
+                    has_all=1
+                elif [[ "$t" =~ ^[0-9]+$ ]]; then
+                    s="${s}${s:+,}$t"; c=$((c+1))
+                fi
+            done
+            if [ $c -gt 0 ]; then
+                echo "$s"; return 0
+            fi
+            if [ $has_all -eq 1 ]; then
                 echo "ALL"; return 0
             fi
-            s=""; c=0
-            for t in $(printf '%s' "$res" | tr -d '"'); do
-                if [[ "$t" =~ ^[0-9]+$ ]]; then s="${s}${s:+,}$t"; c=$((c+1)); fi
-            done
-            if [ $c -eq 0 ]; then
-                whiptail --title "$title" --msgbox \
-                    "$(is_en && echo 'Nothing selected — tick ALL or select tracks.' || echo '未选择任何曲目——勾选 ALL 或勾选具体曲目。')" \
-                    0 60 "${MF_WT_COMMON[@]}"
-                continue
-            fi
-            echo "$s"; return 0
+            whiptail --title "$title" --msgbox \
+                "$(is_en && echo 'Nothing selected — tick ALL or select tracks.' || echo '未选择任何曲目——勾选 ALL 或勾选具体曲目。')" \
+                0 60 "${MF_WT_COMMON[@]}"
         done
     fi
 
@@ -670,23 +797,28 @@ ui_checklist() {
                         for i in $(seq 0 $((n-1))); do on[$i]=$all_on; done
                     else
                         on[$((cur-1))]=$((1 - on[$((cur-1))]))
+                        # v4.0.2 修复：一旦手动勾选/取消任意单曲，视为放弃"全选"，
+                        # 避免顶部 ALL 标志位从未被显式取消、回车时把单独选的曲目吞掉
+                        all_on=0
                     fi
                     _ui_clear $((page_n+6)); redraw=1 ;;
                 a|A) all_on=1; for i in $(seq 0 $((n-1))); do on[$i]=1; done; _ui_clear $((page_n+6)); redraw=1 ;;
                 n|N) all_on=0; for i in $(seq 0 $((n-1))); do on[$i]=0; done; _ui_clear $((page_n+6)); redraw=1 ;;
                 enter)
-                    if [ $all_on -eq 1 ]; then echo "" >&2; echo "ALL"; return 0; fi
-                    if [ "$(_ui_sel_cnt)" -eq 0 ]; then
-                        flash="$(is_en && echo '⚠ nothing selected' || echo '⚠ 未选择任何条目')"
-                        _ui_clear $((page_n+6)); redraw=1; continue
+                    # v4.0.2 修复：只要有手动勾选的具体曲目，一律以具体选择为准，
+                    # 不再被可能残留的 all_on=1 覆盖成"下载全部"
+                    if [ "$(_ui_sel_cnt)" -gt 0 ]; then
+                        echo "" >&2
+                        _ui_sel_str; return 0
                     fi
-                    echo "" >&2
-                    _ui_sel_str; return 0 ;;
+                    if [ $all_on -eq 1 ]; then echo "" >&2; echo "ALL"; return 0; fi
+                    flash="$(is_en && echo '⚠ nothing selected' || echo '⚠ 未选择任何条目')"
+                    _ui_clear $((page_n+6)); redraw=1; continue ;;
                 b|B|esc) echo "" >&2; return 255 ;;
                 [1-9])
                     rel=$KEY; start=$((page * page_n)); t2=$((start + rel - 1))
                     if [ $t2 -lt $n ] && [ $t2 -ge $start ]; then
-                        cur=$((t2+1)); on[$t2]=$((1 - on[$t2])); _ui_clear $((page_n+6)); redraw=1
+                        cur=$((t2+1)); on[$t2]=$((1 - on[$t2])); all_on=0; _ui_clear $((page_n+6)); redraw=1
                     fi ;;
             esac
         done

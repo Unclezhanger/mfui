@@ -103,12 +103,12 @@ function tryExec(file: string, args: string[]): string | null {
 }
 
 function detectYtdlp(): Dependency & { _debug?: unknown } {
-  // 0. 项目 venv 的 yt-dlp（v4 默认安装位置，优先级最高）
+  // 0. 项目内独立二进制（v4.1：musicfeed/bin/yt-dlp，setup.sh 下载）
   // 1. 环境变量 MF_YTDLP（start.sh 启动时 export）
   // 2. mf_config.sh 的 MF_YTDLP
-  const venvYtdlp = path.join(PROJECT_ROOT, '.venv', 'bin', 'yt-dlp')
-  let bin = fs.existsSync(venvYtdlp)
-    ? venvYtdlp
+  const binYtdlp = path.join(MF_DIR, 'bin', 'yt-dlp')
+  let bin = fs.existsSync(binYtdlp)
+    ? binYtdlp
     : process.env.MF_YTDLP || getConfigYtdlp()
   const dbg = {
     configYtdlp: bin,
@@ -134,7 +134,7 @@ function detectYtdlp(): Dependency & { _debug?: unknown } {
     return {
       installed: false,
       required: true,
-      installHint: 'pip install yt-dlp 或下载 https://github.com/yt-dlp/yt-dlp',
+      installHint: '运行 setup.sh 下载独立二进制，或 https://github.com/yt-dlp/yt-dlp',
       _debug: dbg,
     }
   }
@@ -167,51 +167,36 @@ function detectFfmpeg(): Dependency {
   }
 }
 
-function detectPython3(): Dependency {
-  const bin = findCommand('python3') || '/usr/bin/python3'
-  const ver = tryExec(bin, ['--version'])
-  // `python3 --version` 输出 "Python 3.12.13"
-  const m = ver?.match(/Python\s+([\d.]+)/)
-  return {
-    installed: !!ver,
-    version: m?.[1] || ver || undefined,
-    required: true,
-  }
-}
-
-function detectMutagen(): Dependency {
-  // 优先用项目 venv 的 python3（mutagen 装在 venv 里）
-  const venvPython = path.join(PROJECT_ROOT, '.venv', 'bin', 'python3')
-  const bin = fs.existsSync(venvPython)
-    ? venvPython
-    : findCommand('python3') || '/usr/bin/python3'
-  const out = tryExec(bin, [
-    '-c',
-    'import mutagen; print(mutagen.version_string)',
-  ])
-  if (!out) {
-    return {
-      installed: false,
-      required: true,
-      installHint: 'pip install mutagen',
-    }
-  }
-  return { installed: true, version: out.trim(), required: true }
-}
-
 function detectNode(): Dependency {
   const bin = findCommand('node')
   if (!bin) {
     return {
       installed: false,
       required: true,
-      installHint: '必需（v4 起 Node.js >= 20 是运行时）：NodeSource 或 nvm 安装',
+      installHint: '必需（WebUI/job-runner 运行时，>=20）：NodeSource 或 nvm 安装',
     }
   }
   const ver = tryExec(bin, ['--version'])
   const major = parseInt((ver || '').replace(/^v/, ''), 10)
   return {
     installed: !!ver && major >= 20,
+    version: ver || undefined,
+    required: true,
+  }
+}
+
+function detectJq(): Dependency {
+  const bin = findCommand('jq')
+  if (!bin) {
+    return {
+      installed: false,
+      required: true,
+      installHint: 'apt install jq / brew install jq（v4.1 内核 JSON 解析必需）',
+    }
+  }
+  const ver = tryExec(bin, ['--version'])
+  return {
+    installed: !!ver,
     version: ver || undefined,
     required: true,
   }
@@ -243,7 +228,7 @@ export async function GET() {
 
   // 测试文件存在性
   for (const p of [
-    path.join(PROJECT_ROOT, '.venv', 'bin', 'yt-dlp'),
+    path.join(MF_DIR, 'bin', 'yt-dlp'),
     '/usr/local/bin/yt-dlp',
     '/usr/bin/yt-dlp',
     `${process.env.HOME}/.local/bin/yt-dlp`,
@@ -270,8 +255,7 @@ export async function GET() {
   const deps: Dependencies = {
     ytdlp: detectYtdlp(),
     ffmpeg: detectFfmpeg(),
-    python3: detectPython3(),
-    mutagen: detectMutagen(),
+    jq: detectJq(),
     node: detectNode(),
   }
 

@@ -71,7 +71,7 @@ export default function Home() {
         {/* Sticky Footer */}
         <footer className="mt-auto border-t border-border bg-background/80 px-4 py-3 backdrop-blur-sm md:px-6">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>Powered by yt-dlp · ffmpeg · python3+mutagen</span>
+            <span>Powered by yt-dlp · ffmpeg · jq</span>
             <span>© Unclezhanger</span>
           </div>
         </footer>

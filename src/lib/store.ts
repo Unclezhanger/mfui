@@ -34,9 +34,8 @@ import type {
 const emptyDeps: Dependencies = {
   ytdlp: { installed: false, required: true },
   ffmpeg: { installed: false, required: true },
-  python3: { installed: false, required: true },
-  mutagen: { installed: false, required: true },
-  node: { installed: false, required: false },
+  jq: { installed: false, required: true },
+  node: { installed: false, required: true },
 }
 
 const emptyConfig: MfConfig = {

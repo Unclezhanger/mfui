@@ -11,11 +11,10 @@ import type {
 } from './types'
 
 export const mockDependencies: Dependencies = {
-  ytdlp: { installed: true, version: '2026.07.04', required: true },
-  ffmpeg: { installed: true, version: '7.1.5', required: true },
-  python3: { installed: true, version: '3.12.13', required: true },
-  mutagen: { installed: true, version: '1.47.0', required: true },
-  node: { installed: true, version: 'v24.18.0', required: false },
+  ytdlp: { installed: true, version: '2026.08.19', required: true },
+  ffmpeg: { installed: true, version: '7.0.2-static', required: true },
+  jq: { installed: true, version: '1.7.1', required: true },
+  node: { installed: true, version: 'v24.15.0', required: true },
 }
 
 export const mockConfig: MfConfig = {

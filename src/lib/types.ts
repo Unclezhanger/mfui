@@ -49,8 +49,8 @@ export interface Dependency {
 export interface Dependencies {
   ytdlp: Dependency
   ffmpeg: Dependency
-  python3: Dependency
-  mutagen: Dependency
+  jq: Dependency
+  /** WebUI / job-runner 运行时（node>=20）；面板列出用于环境体检 */
   node: Dependency
 }
 

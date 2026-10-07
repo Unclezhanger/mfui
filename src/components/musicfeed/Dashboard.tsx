@@ -6,7 +6,7 @@ import {
   AlertTriangle,
   Terminal,
   Cpu,
-  Music,
+  Braces,
   Download,
   Activity,
   Plus,
@@ -28,8 +28,7 @@ import { LinkTypeBadge } from './LinkTypeBadge'
 const depIcon = {
   ytdlp: Terminal,
   ffmpeg: Cpu,
-  python3: Terminal,
-  mutagen: Music,
+  jq: Braces,
   node: Cpu,
 } as const
 
@@ -44,12 +43,15 @@ function fmtRelative(ts: string, t: (s: string, p?: Record<string, string | numb
 }
 
 export function Dashboard() {
-  const { dependencies, config, jobs, uiLang, startNewDownloadFlow } = useMusicFeedStore()
+  const { dependencies, config, jobs, uiLang, startNewDownloadFlow, initialized } = useMusicFeedStore()
   const t = useT()
 
-  const missingRequired = (Object.keys(dependencies) as Array<keyof typeof dependencies>).filter(
-    (k) => dependencies[k].required && !dependencies[k].installed
-  )
+  // 首次拉取完成前不判缺依赖（避免"0/4 缺失"闪烁）
+  const missingRequired = initialized
+    ? (Object.keys(dependencies) as Array<keyof typeof dependencies>).filter(
+        (k) => dependencies[k].required && !dependencies[k].installed
+      )
+    : []
 
   const activeJobs = jobs.filter((j) => j.status === 'running')
   const today = new Date().toDateString()
@@ -77,14 +79,14 @@ export function Dashboard() {
         <StatCard
           title={t('依赖状态')}
           icon={<Terminal className="size-4" />}
-          value={`${5 - missingRequired.length}/5`}
+          value={`${4 - missingRequired.length}/4`}
           subtitle={t('必需依赖就绪')}
         >
           <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(dependencies) as Array<keyof typeof dependencies>).map((k) => {
+            {(Object.keys(dependencies) as Array<keyof typeof dependencies | '_debug' | 'caddy'>).map((k) => {
               // 跳过非依赖字段（如 _debug 调试信息）
               if (k === '_debug' || k === 'caddy') return null
-              const dep = dependencies[k]
+              const dep = dependencies[k as keyof typeof dependencies]
               const Icon = depIcon[k]
               if (!Icon) return null
               return (

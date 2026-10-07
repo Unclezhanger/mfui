@@ -21,35 +21,19 @@ const linkExamples: { type: string; label: string; example: string }[] = [
   { type: 'single', label: '单曲/MV', example: 'youtube.com/watch?v=...' },
 ]
 
+// 注意：不按 URL 去重——同一链接配置多次（如多艺人列表分批下载到不同文件夹）
+// 是合法用法；"每次解析只认输入框"由预览处理器里的 initDownloadQueue 全量重置保证
 function parseUrls(text: string): string[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  const urls: string[] = []
-  const seen = new Set<string>()
-
-  for (const line of lines) {
-    const matches = line.match(/https?:\/\/[^\s)\]]+/g)
-    if (matches?.length) {
-      for (const raw of matches) {
-        const url = raw.trim().replace(/[>,.;]+$/g, '')
-        if (!seen.has(url)) {
-          seen.add(url)
-          urls.push(url)
-        }
-      }
-      continue
-    }
-
-    if (/^https?:\/\//i.test(line) && !seen.has(line)) {
-      seen.add(line)
-      urls.push(line)
-    }
-  }
-
-  return urls
+  // 按行/空白拆出全部 http(s) 链接（不去重：同一链接配置多次是合法用法）
+  return (
+    text
+      .split(/\r?\n/)
+      .flatMap((line) => line.split(/\s+/))
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => line.match(/https?:\/\/[^\s)\]]+/g) ?? [])
+      .map((url) => url.trim().replace(/[>,.;]+$/g, ''))
+  )
 }
 
 export function LinkInput() {
@@ -94,15 +78,13 @@ export function LinkInput() {
     setForm({ url: firstUrl })
 
     try {
-      if (urls.length > 1) {
-        await useMusicFeedStore.getState().initDownloadQueue(urls)
-        toast.success(t('已识别 {n} 个链接，开始逐个配置', { n: urls.length }))
-        return
-      }
-
-      await previewLink(firstUrl)
+      // v4.1: 单链接也走 initDownloadQueue（全量重置队列）——保证"每次解析只认
+      // 输入框当前内容"，浏览器回退/前进残留的旧队列草稿不会混进新任务
+      await useMusicFeedStore.getState().initDownloadQueue(urls)
       const p = useMusicFeedStore.getState().preview
-      if (p?.ok) {
+      if (urls.length > 1) {
+        toast.success(t('已识别 {n} 个链接，开始逐个配置', { n: urls.length }))
+      } else if (p?.ok) {
         toast.success(t('预览成功 · {n} 首', { n: p.trackCount ?? 0 }))
       } else if (p?.error) {
         toast.error(t('预览失败：{m}', { m: p.error }))

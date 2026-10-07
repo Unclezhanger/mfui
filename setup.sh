@@ -55,6 +55,27 @@ ask_yn() {
   done
 }
 
+# 多选一：返回被选中的选项文本；Esc/空 = 默认项
+ask_choice() {
+  # 显示全部走 stderr（调用处用 $( ) 捕获答案，stdout 只允许出现最终选项）
+  local prompt="$1" default="$2"; shift 2
+  local opts=("$@") i ans
+  echo "${C_BOLD}${prompt}${C_RESET}" >&2
+  for i in "${!opts[@]}"; do
+    [[ "${opts[$i]}" == "$default" ]] \
+      && echo "  $((i+1)). ${opts[$i]} (default)" >&2 \
+      || echo "  $((i+1)). ${opts[$i]}" >&2
+  done
+  while true; do
+    read -rp "  Select [1-${#opts[@]}, Enter=default]: " ans
+    ans=${ans:-$default}
+    for i in "${!opts[@]}"; do
+      [[ "$ans" == "${opts[$i]}" || "$ans" == "$((i+1))" ]] && { echo "${opts[$i]}"; return 0; }
+    done
+    echo "  Invalid choice" >&2
+  done
+}
+
 # Get command version (fault-tolerant)
 get_version() {
   local cmd="$1" ver_cmd="$2"
@@ -63,12 +84,6 @@ get_version() {
   else
     echo ""
   fi
-}
-
-# Check Python module
-check_python_module() {
-  local mod="$1"
-  python3 -c "import ${mod}" 2>/dev/null && echo "1" || echo "0"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,111 +105,83 @@ print_system_info() {
 # Phase 2: Dependency Detection (show only, no action)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Global variables: store detection results for later install functions
-DEP_BASH_VER="" DEP_YTDLP_VER="" DEP_FFMPEG_VER=""
-DEP_PYTHON_VER="" DEP_NODE_VER="" DEP_MUTAGEN_VER=""
-DEP_VENV_YTDLP_VER="" DEP_VENV_MUTAGEN_VER=""
-DEP_BASH_INSTALLED=0 DEP_YTDLP_INSTALLED=0 DEP_FFMPEG_INSTALLED=0
-DEP_PYTHON_INSTALLED=0 DEP_NODE_INSTALLED=0 DEP_MUTAGEN_INSTALLED=0
-DEP_CURL_INSTALLED=0
+collect_dep_info() {
+  # musicfeed v4.1 内核依赖：node>=20（WebUI 运行时）、ffmpeg、jq、curl、
+  # yt-dlp（项目内独立二进制 musicfeed/bin/yt-dlp 优先）。python3/venv/mutagen 已移除。
+  # 项目内隔离安装目录（tools/bin 为 node 链接，musicfeed/bin 为 yt-dlp/ffmpeg/jq 静态件）
+  TOOLS_BIN="$SCRIPT_DIR/tools/bin"
+  MF_BIN_DIR="$SCRIPT_DIR/musicfeed/bin"
+  [[ -x "$TOOLS_BIN/node" ]] && export PATH="$TOOLS_BIN:$PATH"
+  # 项目内 ffmpeg/jq 静态件与系统同权优先（与 start.sh 的 PATH 顺序一致）
+  [[ -x "$MF_BIN_DIR/ffmpeg" || -x "$MF_BIN_DIR/jq" ]] && export PATH="$MF_BIN_DIR:$PATH"
 
-MF_VENV_DIR="$SCRIPT_DIR/.venv"
-
-detect_dependencies() {
-  title "Dependency Detection (Current State)"
-
-  # Required commands
-  DEP_BASH_VER=$(get_version bash "bash --version")
-  DEP_FFMPEG_VER=$(get_version ffmpeg "ffmpeg -version")
-  DEP_PYTHON_VER=$(get_version python3 "python3 --version")
+  DEP_FFMPEG_VER=$(ffmpeg -version 2>/dev/null | head -1 | sed -E "s/ffmpeg version ([^ ]+).*/\1/")
+  DEP_JQ_VER=$(get_version jq "jq --version")
   DEP_NODE_VER=$(get_version node "node --version")
+  # 标注 ffmpeg/jq 来源（项目内 musicfeed/bin / 系统）
+  [[ -n "$DEP_FFMPEG_VER" && "$(command -v ffmpeg)" == "$MF_BIN_DIR/"* ]] && DEP_FFMPEG_VER="$DEP_FFMPEG_VER (project)"
+  [[ -n "$DEP_JQ_VER" && "$(command -v jq)" == "$MF_BIN_DIR/"* ]] && DEP_JQ_VER="$DEP_JQ_VER (project)"
 
-  command -v bash &>/dev/null && DEP_BASH_INSTALLED=1
+  # 标志位先初始化为 0（set -u 下未赋值变量引用会报 unbound）
+  DEP_FFMPEG_INSTALLED=0
+  DEP_JQ_INSTALLED=0
+  DEP_CURL_INSTALLED=0
+  DEP_YTDLP_INSTALLED=0
+
   command -v ffmpeg &>/dev/null && DEP_FFMPEG_INSTALLED=1
-  command -v python3 &>/dev/null && DEP_PYTHON_INSTALLED=1
-  command -v node &>/dev/null && DEP_NODE_INSTALLED=1
+  command -v jq &>/dev/null && DEP_JQ_INSTALLED=1
   command -v curl &>/dev/null && DEP_CURL_INSTALLED=1
 
-  # node version check (Next.js 16 requires >= 20)
-  DEP_NODE_OK=0
-  if [[ $DEP_NODE_INSTALLED -eq 1 ]]; then
-    local major
+  if command -v node &>/dev/null; then
+    DEP_NODE_VER=$(node --version 2>/dev/null)
     major=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
-    [[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 20 ]] && DEP_NODE_OK=1
+    [[ -n "$major" && "$major" -ge 20 ]] && DEP_NODE_OK=1 || DEP_NODE_OK=0
+    # 标注 node 来源（系统 / 项目内）
+    [[ "$(command -v node)" == "$SCRIPT_DIR/tools/"* ]] && DEP_NODE_VER="$DEP_NODE_VER (project)" || DEP_NODE_VER="$DEP_NODE_VER (system)"
+  else
+    DEP_NODE_OK=0
   fi
 
-  # yt-dlp: check project venv first
-  if [[ -x "$MF_VENV_DIR/bin/yt-dlp" ]]; then
-    DEP_VENV_YTDLP_VER=$("$MF_VENV_DIR/bin/yt-dlp" --version 2>/dev/null)
+  # yt-dlp：项目内独立二优先，回退系统 PATH
+  MF_BIN_DIR="$SCRIPT_DIR/musicfeed/bin"
+  if [[ -x "$MF_BIN_DIR/yt-dlp" ]]; then
+    DEP_BIN_YTDLP_VER=$("$MF_BIN_DIR/yt-dlp" --version 2>/dev/null)
+    DEP_BIN_YTDLP_INSTALLED=1
+  else
+    DEP_BIN_YTDLP_INSTALLED=0
   fi
   command -v yt-dlp &>/dev/null && DEP_YTDLP_INSTALLED=1
   DEP_YTDLP_VER=$(get_version yt-dlp "yt-dlp --version")
-
-  # mutagen: check project venv first
-  if [[ -x "$MF_VENV_DIR/bin/python3" ]]; then
-    if "$MF_VENV_DIR/bin/python3" -c "import mutagen" &>/dev/null; then
-      DEP_VENV_MUTAGEN_VER=$("$MF_VENV_DIR/bin/python3" -c "import mutagen; print(mutagen.version_string)" 2>/dev/null)
-    fi
-  fi
-  if [[ $(check_python_module mutagen) == "1" ]]; then
-    DEP_MUTAGEN_INSTALLED=1
-    DEP_MUTAGEN_VER=$(python3 -c "import mutagen; print(mutagen.version_string)" 2>/dev/null)
-  fi
-
-  # Print table (version truncated to reasonable length to maintain alignment)
-  echo ""
-  printf "  ${C_BOLD}%-12s %-26s %-12s %-8s${C_RESET}\n" "Dependency" "Current Version" "Status" "Required"
-  printf "  %-12s %-26s %-12s %-8s\n" "----------" "------------------------" "----------" "------"
-
-  print_dep_row "bash"    "$DEP_BASH_VER"    $DEP_BASH_INSTALLED    true
-  print_dep_row "node>=20" "$DEP_NODE_VER"   $DEP_NODE_OK           true
-  print_dep_row "ffmpeg"  "$DEP_FFMPEG_VER"  $DEP_FFMPEG_INSTALLED  true
-  print_dep_row "python3" "$DEP_PYTHON_VER" $DEP_PYTHON_INSTALLED true
-  print_dep_row "curl"    ""                 $DEP_CURL_INSTALLED    true
-  # python3-venv: project venv exists → ok; otherwise check if system can create venv (ensurepip available)
-  if [[ -x "$MF_VENV_DIR/bin/pip" ]]; then
-    print_dep_row "venv(python)" "Project .venv created" 1 true
-  elif python3 -c "import ensurepip" &>/dev/null; then
-    print_dep_row "venv(python)" "Available (ensurepip)" 1 true
-  else
-    print_dep_row "venv(python)" "Missing python3-venv" 0 true
-  fi
-  if [[ -n "$DEP_VENV_YTDLP_VER" ]]; then
-    print_dep_row "yt-dlp(venv)" "venv: $DEP_VENV_YTDLP_VER" 1 true
-  else
-    print_dep_row "yt-dlp" "system: ${DEP_YTDLP_VER}" $DEP_YTDLP_INSTALLED true
-  fi
-  if [[ -n "$DEP_VENV_MUTAGEN_VER" ]]; then
-    print_dep_row "mutagen(venv)" "venv: $DEP_VENV_MUTAGEN_VER" 1 true
-  else
-    print_dep_row "mutagen" "system: ${DEP_MUTAGEN_VER}" $DEP_MUTAGEN_INSTALLED true
-  fi
 }
 
 print_dep_row() {
-  local name="$1" ver="$2" installed="$3" required="$4"
-  local status color
+  local name="$1" ver="${2:-}" installed="$3" required="${4:-true}" status
   if [[ $installed -eq 1 ]]; then
-    if [[ "$required" == "true" ]]; then
-      status="✓ Installed"; color="$C_GREEN"
-    else
-      status="✓ Installed"; color="$C_CYAN"
-    fi
+    status="${C_GREEN}✓${C_RESET}"
+  elif [[ "$required" == "true" ]]; then
+    status="${C_RED}✗${C_RESET}"
   else
-    if [[ "$required" == "true" ]]; then
-      status="✗ Missing"; color="$C_RED"
-    else
-      status="⚠ Missing"; color="$C_YELLOW"
-    fi
+    status="${C_YELLOW}○${C_RESET}"
   fi
-  local req_str; [[ "$required" == "true" ]] && req_str="Required" || req_str="Optional"
-  # Truncate version to 24 characters
-  local short_ver="${ver:-(empty)}"
-  if [[ ${#short_ver} -gt 24 ]]; then
-    short_ver="${short_ver:0:23}…"
+  printf '  │ %-22s │ %-28s │   %s  │\n' "$name" "${ver:--}" "$status"
+}
+
+print_dep_table() {
+  echo "  ┌────────────────────────┬──────────────────────────────┬────────┐"
+  echo "  │ Dependency             │ Version                      │ Status │"
+  echo "  ├────────────────────────┼──────────────────────────────┼────────┤"
+  print_dep_row "node>=20 (WebUI)" "$DEP_NODE_VER"   $DEP_NODE_OK           true
+  print_dep_row "ffmpeg"  "$DEP_FFMPEG_VER"  $DEP_FFMPEG_INSTALLED  true
+  print_dep_row "jq"      "$DEP_JQ_VER"      $DEP_JQ_INSTALLED      true
+  if [[ $DEP_BIN_YTDLP_INSTALLED -eq 1 ]]; then
+    print_dep_row "yt-dlp(bin)" "project: $DEP_BIN_YTDLP_VER" 1 true
+  elif [[ $DEP_YTDLP_INSTALLED -eq 1 ]]; then
+    print_dep_row "yt-dlp" "system: ${DEP_YTDLP_VER}" $DEP_YTDLP_INSTALLED true
+  else
+    print_dep_row "yt-dlp" "(not installed)" 0 true
   fi
-  printf "  %-12s %-26s ${color}%-12s${C_RESET} %-8s\n" \
-    "$name" "$short_ver" "$status" "$req_str"
+  echo "  └────────────────────────┴──────────────────────────────┴────────┘"
+  echo "  (python3 / venv / mutagen — no longer needed by the v4.1 kernel)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,11 +199,9 @@ install_system_deps() {
     echo "    Current version: ${current_ver:-(not installed)}"
     echo "    Action:          $action"
     echo "    Will execute:"
-    # Multi-line commands shown indented
     echo "$cmd" | sed 's/^/      /'
     if ask_yn "    Confirm execution?" "$default_yn"; then
       info "Executing..."
-      # Use eval to run multi-line commands
       if eval "$cmd"; then
         ok "$name install/upgrade complete"
       else
@@ -229,9 +214,77 @@ install_system_deps() {
   }
 
   # ── Missing required dependencies ──
+  # 隔离优先策略：优先装到项目目录（tools/bin 与 musicfeed/bin，删目录即卸载、
+  # 不与系统工具串用）；用户明确选择才装进系统。
+  MF_BIN_DIR="$SCRIPT_DIR/musicfeed/bin"
+  mkdir -p "$MF_BIN_DIR"
+
+  download_static_ffmpeg() {
+    local dest="$MF_BIN_DIR/ffmpeg" asset
+    case "$(uname -m)" in
+      aarch64|arm64) asset="ffmpeg-release-arm64-static" ;;
+      *)             asset="ffmpeg-release-amd64-static" ;;
+    esac
+    info "Downloading static ffmpeg ($asset)..."
+    curl -fsSL --retry 3 "https://johnvansickle.com/ffmpeg/releases/$asset.tar.xz" -o /tmp/ff.tar.xz \
+      && tar -xJf /tmp/ff.tar.xz -C /tmp --strip-components=1 --wildcards '*/ffmpeg' '*/ffprobe' \
+      && mv /tmp/ffmpeg "$dest" && mv /tmp/ffprobe "$MF_BIN_DIR/ffprobe" \
+      && chmod +x "$dest" "$MF_BIN_DIR/ffprobe" && rm -f /tmp/ff.tar.xz
+  }
+
+  download_static_jq() {
+    local dest="$MF_BIN_DIR/jq" asset
+    case "$(uname -m)" in
+      aarch64|arm64) asset="jq-linux-arm64" ;;
+      *)             asset="jq-linux-amd64" ;;
+    esac
+    info "Downloading static jq ($asset)..."
+    curl -fsSL --retry 3 "https://github.com/jqlang/jq/releases/latest/download/$asset" -o "$dest" \
+      && chmod +x "$dest"
+  }
+
+  install_project_node() {
+    local ver="22.14.0" asset dir
+    case "$(uname -m)" in
+      aarch64|arm64) asset="linux-arm64" ;;
+      *)             asset="linux-x64" ;;
+    esac
+    info "Downloading Node.js v$ver ($asset) to project tools/..."
+    mkdir -p "$SCRIPT_DIR/tools/bin"
+    curl -fsSL --retry 3 "https://nodejs.org/dist/v$ver/node-v$ver-$asset.tar.xz" -o /tmp/node.tar.xz \
+      && tar -xJf /tmp/node.tar.xz -C "$SCRIPT_DIR/tools" \
+      && dir="$SCRIPT_DIR/tools/node-v$ver-$asset" \
+      && ln -sfn "$dir/bin/node" "$SCRIPT_DIR/tools/bin/node" \
+      && ln -sfn "$dir/bin/npm" "$SCRIPT_DIR/tools/bin/npm" \
+      && ln -sfn "$dir/bin/npx" "$SCRIPT_DIR/tools/bin/npx" \
+      && rm -f /tmp/node.tar.xz \
+      && ok "project node: $($SCRIPT_DIR/tools/bin/node --version 2>/dev/null)"
+  }
+
   if [[ $DEP_FFMPEG_INSTALLED -eq 0 ]]; then
-    run_install "ffmpeg" "$DEP_FFMPEG_VER" "Install ffmpeg" \
-      "sudo apt update && sudo apt install -y ffmpeg" "y"
+    echo ""
+    echo "  ${C_BOLD}[ffmpeg]${C_RESET} — 未检测到"
+    case "$(ask_choice "    How should ffmpeg be installed? (project-local is isolated: delete the folder to uninstall, never touches system tools)" "Project-local (static build, recommended)" "Project-local (static build, recommended)" "System (sudo apt)")" in
+      "System (sudo apt)")
+        run_install "ffmpeg" "$DEP_FFMPEG_VER" "Install ffmpeg (system)" \
+          "sudo apt update && sudo apt install -y ffmpeg" "y" ;;
+      *)
+        run_install "ffmpeg (project)" "" "Download static ffmpeg → $MF_BIN_DIR" \
+          "download_static_ffmpeg" "y" ;;
+    esac
+  fi
+
+  if [[ $DEP_JQ_INSTALLED -eq 0 ]]; then
+    echo ""
+    echo "  ${C_BOLD}[jq]${C_RESET} — 未检测到（v4.1 内核 JSON 解析必需）"
+    case "$(ask_choice "    How should jq be installed?" "Project-local (static single file, recommended)" "Project-local (static single file, recommended)" "System (sudo apt)")" in
+      "System (sudo apt)")
+        run_install "jq" "$DEP_JQ_VER" "Install jq (system)" \
+          "sudo apt update && sudo apt install -y jq" "y" ;;
+      *)
+        run_install "jq (project)" "" "Download static jq → $MF_BIN_DIR" \
+          "download_static_jq" "y" ;;
+    esac
   fi
 
   if [[ $DEP_CURL_INSTALLED -eq 0 ]]; then
@@ -239,96 +292,105 @@ install_system_deps() {
       "sudo apt update && sudo apt install -y curl" "y"
   fi
 
-  if [[ $DEP_PYTHON_INSTALLED -eq 0 ]]; then
-    run_install "python3" "$DEP_PYTHON_VER" "Install python3 + venv" \
-      "sudo apt update && sudo apt install -y python3 python3-venv" "y"
-  fi
-
-  # ── node: required, >= 20 (apt version usually too old, use NodeSource) ──
+  # ── node: required, >= 20（WebUI/job-runner 运行时）──
   if [[ $DEP_NODE_OK -ne 1 ]]; then
     echo ""
     echo "  ${C_BOLD}[node]${C_RESET} — Requires Node.js >= 20 (current: ${DEP_NODE_VER:-not installed})"
-    echo "    Mint/Ubuntu apt repos typically have old nodejs versions. Recommend NodeSource 22.x"
-    echo "    (Installing for other projects is fine: node is just a runtime, each project has its own node_modules)"
-    if ask_yn "    Install Node.js 22 via NodeSource?" "y"; then
-      run_install "node 22" "$DEP_NODE_VER" "Install Node.js 22 (NodeSource)" \
-        "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs" "y"
-    else
-      warn "Skipped node install (you can install >= 20 separately with nvm/n, then re-run setup.sh)"
-    fi
+    case "$(ask_choice "    How should Node.js be installed?" "Project-local (official binary, no sudo)" "Project-local (official binary, no sudo)" "System (NodeSource, sudo)")" in
+      "System (NodeSource, sudo)")
+        run_install "node 22" "$DEP_NODE_VER" "Install Node.js 22 (NodeSource)" \
+          "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs" "y" ;;
+      *)
+        run_install "node (project)" "" "Download Node.js LTS → $SCRIPT_DIR/tools/" \
+          "install_project_node" "y" ;;
+    esac
   fi
 
-  # ── Project Python venv (isolated yt-dlp / mutagen install, no sudo, no system pollution) ──
-  echo ""
-  echo "  ${C_BOLD}[Python venv]${C_RESET} — Isolated environment for yt-dlp / mutagen"
-  echo "    Location: $MF_VENV_DIR (project-local, delete to fully uninstall)"
-  echo "    venv:     yt-dlp ${DEP_VENV_YTDLP_VER:-not installed}, mutagen ${DEP_VENV_MUTAGEN_VER:-not installed}"
-  if ask_yn "    Create/update venv and install yt-dlp + mutagen?" "y"; then
+  # ── yt-dlp：独立官方二进制 → 项目内 musicfeed/bin/yt-dlp（无 python/pip）──
+  # 频道切换（stable/nightly）与升级统一在 mf_setup.sh 的 yt-dlp 步骤进行
+  # （setup.sh 与 mf_setup 指向同一个二进制，避免两头询问互相打架）；
+  # start.sh 每次启动按配置里的 MF_YTDLP_CHANNEL 自动检测所选频道的最新版本
+  MF_BIN_DIR="$SCRIPT_DIR/musicfeed/bin"
+  if [[ $DEP_BIN_YTDLP_INSTALLED -eq 1 ]]; then
     echo ""
-    info "Creating venv (reuse if exists)..."
-    if python3 -m venv "$MF_VENV_DIR"; then
-      ok "venv ready"
-    else
-      err "venv creation failed (missing python3-venv? try: sudo apt install python3-venv)"
-      return 1
-    fi
-    # yt-dlp nightly versions carry a 4th version segment (e.g. 2025.08.30.232815);
-    # stable releases are always YYYY.MM.DD. Used to keep the nightly channel on re-runs.
-    venv_ytdlp_ver="$("$MF_VENV_DIR/bin/yt-dlp" --version 2>/dev/null || true)"
-    if [[ "$venv_ytdlp_ver" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4,8}$ ]]; then
-      # Nightly already chosen on a previous run — always refresh to the latest nightly
-      # (pip would otherwise keep the stale nightly, since --upgrade only moves to the
-      # latest *stable* from PyPI, and the nightly ask below defaults to No).
-      info "yt-dlp nightly $venv_ytdlp_ver detected, updating to latest nightly..."
-      if "$MF_VENV_DIR/bin/pip" install --no-cache-dir --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
-        ok "nightly updated in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
+    info "yt-dlp: $("$MF_BIN_DIR/yt-dlp" --version 2>/dev/null) (project bin)"
+    info "Channel switching (stable/nightly) and upgrades: run ${C_BOLD}bash mf_setup.sh${C_RESET} → yt-dlp step"
+  elif [[ $DEP_YTDLP_INSTALLED -eq 1 ]]; then
+    echo ""
+    info "yt-dlp: ${DEP_YTDLP_VER:-installed} (system PATH)"
+    info "To isolate it into the project bin and manage stable/nightly switching: run ${C_BOLD}bash mf_setup.sh${C_RESET} → yt-dlp step"
+  else
+    echo ""
+    echo "  ${C_BOLD}[yt-dlp]${C_RESET} — Standalone official binary → $MF_BIN_DIR/yt-dlp"
+    echo "    (v4.1 kernel needs no python/pip; binary is self-contained)"
+    if ask_yn "    Download yt-dlp (stable) to project bin?" "y"; then
+      local ytdlp_asset
+      case "$(uname -m)" in
+        aarch64|arm64) ytdlp_asset="yt-dlp_linux_aarch64" ;;
+        *)             ytdlp_asset="yt-dlp_linux" ;;
+      esac
+      info "Downloading yt-dlp ($ytdlp_asset)..."
+      mkdir -p "$MF_BIN_DIR"
+      if curl -fsSL --retry 3 -o "$MF_BIN_DIR/yt-dlp" \
+          "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ytdlp_asset" \
+          && chmod +x "$MF_BIN_DIR/yt-dlp"; then
+        ok "yt-dlp installed: $("$MF_BIN_DIR/yt-dlp" --version 2>/dev/null)"
+        cfg_file="$SCRIPT_DIR/musicfeed/mf_config.sh"
+        if [[ -f "$cfg_file" ]] && ! grep -q '^MF_YTDLP_CHANNEL=' "$cfg_file"; then
+          echo 'MF_YTDLP_CHANNEL="stable"' >> "$cfg_file"
+        fi
+        info "To upgrade or switch to the nightly channel (faster YouTube anti-scrape fixes): run ${C_BOLD}bash mf_setup.sh${C_RESET} → yt-dlp step"
       else
-        warn "nightly update failed, keeping existing version $venv_ytdlp_ver"
-      fi
-      if "$MF_VENV_DIR/bin/pip" install --upgrade mutagen; then
-        ok "mutagen: $($MF_VENV_DIR/bin/python -c 'import mutagen; print(mutagen.version_string)' 2>/dev/null)"
-      fi
-    else
-      info "Installing yt-dlp + mutagen to venv..."
-      if "$MF_VENV_DIR/bin/pip" install --upgrade pip yt-dlp mutagen; then
-        ok "yt-dlp $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null) + mutagen installed in venv"
-      else
-        err "venv install failed, check network and re-run setup.sh"
+        err "yt-dlp download failed — check network or set MF_YTDLP manually"
         return 1
       fi
-
-      # yt-dlp nightly option (prevent YouTube anti-scrape)
-      echo ""
-      echo "    Note: YouTube frequently updates anti-scrape mechanisms. yt-dlp nightly updates more frequently and better avoids 403 errors."
-      if ask_yn "    Use yt-dlp nightly instead? (recommended if you encounter 403)" "n"; then
-        info "Installing nightly in venv..."
-        if "$MF_VENV_DIR/bin/pip" install --no-cache-dir --upgrade "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"; then
-          ok "nightly installed in venv: $($MF_VENV_DIR/bin/yt-dlp --version 2>/dev/null)"
-        else
-          warn "nightly install failed, continuing with stable version"
-        fi
-      fi
-    fi
-  else
-    warn "Skipped venv (start.sh will fall back to system yt-dlp, if available)"
-  fi
-
-  # ── Already installed tools: prompt for upgrade (default N, avoid breaking other projects) ──
-  title "Installed Tools Upgrade Check"
-  warn "The following tools are already installed. Upgrading may affect other projects—decide carefully."
-
-  if [[ $DEP_FFMPEG_INSTALLED -eq 1 ]]; then
-    if ask_yn "  Upgrade ffmpeg? (current: ${DEP_FFMPEG_VER})" "n"; then
-      run_install "ffmpeg" "$DEP_FFMPEG_VER" "Upgrade" \
-        "sudo apt update && sudo apt install --only-upgrade -y ffmpeg" "y"
+    else
+      warn "Skipped yt-dlp download (start.sh will fall back to system yt-dlp, if available)"
     fi
   fi
+  # ── Already-installed deps: keep system / isolate into project / upgrade ──
+  # 项目内安装与系统工具互不交叉（musicfeed/bin 与 tools/bin，删目录即卸载）；
+  # start.sh 会把这两个目录放在 PATH 最前，项目内版本自动优先于系统。
+  title "Installed Tools — Keep / Project-local / Upgrade"
+  warn "System-installed tools can stay untouched, be isolated into the project, or be upgraded."
 
-  if [[ $DEP_PYTHON_INSTALLED -eq 1 ]]; then
-    if ask_yn "  Upgrade python3? (current: ${DEP_PYTHON_VER})" "n"; then
-      run_install "python3" "$DEP_PYTHON_VER" "Upgrade" \
-        "sudo apt update && sudo apt install --only-upgrade -y python3" "y"
-    fi
+  if [[ "$(command -v ffmpeg 2>/dev/null)" == "$MF_BIN_DIR/"* ]]; then
+    ok "ffmpeg: already project-local (${DEP_FFMPEG_VER%% *})"
+  elif [[ $DEP_FFMPEG_INSTALLED -eq 1 ]]; then
+    case "$(ask_choice "  ffmpeg ${DEP_FFMPEG_VER%% *}: keep system version, install project-local, or upgrade?" "Keep current (system)" "Keep current (system)" "Install project-local (static build)" "Upgrade system (sudo apt)")" in
+      "Install project-local (static build)")
+        run_install "ffmpeg (project)" "$DEP_FFMPEG_VER" "Download static ffmpeg → $MF_BIN_DIR" \
+          "download_static_ffmpeg" "y" ;;
+      "Upgrade system (sudo apt)")
+        run_install "ffmpeg" "$DEP_FFMPEG_VER" "Upgrade" \
+          "sudo apt update && sudo apt install --only-upgrade -y ffmpeg" "y" ;;
+    esac
+  fi
+
+  if [[ "$(command -v jq 2>/dev/null)" == "$MF_BIN_DIR/"* ]]; then
+    ok "jq: already project-local (${DEP_JQ_VER%% *})"
+  elif [[ $DEP_JQ_INSTALLED -eq 1 ]]; then
+    case "$(ask_choice "  jq ${DEP_JQ_VER%% *}: keep system version, install project-local, or upgrade?" "Keep current (system)" "Keep current (system)" "Install project-local (static single file)" "Upgrade system (sudo apt)")" in
+      "Install project-local (static single file)")
+        run_install "jq (project)" "$DEP_JQ_VER" "Download static jq → $MF_BIN_DIR" \
+          "download_static_jq" "y" ;;
+      "Upgrade system (sudo apt)")
+        run_install "jq" "$DEP_JQ_VER" "Upgrade" \
+          "sudo apt update && sudo apt install -y jq" "y" ;;
+    esac
+  fi
+
+  if [[ "$(command -v node 2>/dev/null)" == "$SCRIPT_DIR/tools/"* ]]; then
+    ok "node: already project-local (${DEP_NODE_VER%% *})"
+  elif [[ $DEP_NODE_OK -eq 1 ]]; then
+    case "$(ask_choice "  node ${DEP_NODE_VER%% *}: keep system version, install project-local, or upgrade?" "Keep current (system)" "Keep current (system)" "Install project-local (official binary, no sudo)" "Upgrade system (NodeSource, sudo)")" in
+      "Install project-local (official binary, no sudo)")
+        run_install "node (project)" "$DEP_NODE_VER" "Download Node.js LTS → $SCRIPT_DIR/tools/" \
+          "install_project_node" "y" ;;
+      "Upgrade system (NodeSource, sudo)")
+        run_install "node 22" "$DEP_NODE_VER" "Install Node.js 22 (NodeSource)" \
+          "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs" "y" ;;
+    esac
   fi
 }
 
@@ -473,7 +535,7 @@ ENVFILE
   fi
 }
 
-# ──────────────────────────────────────────────────────────���──────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Phase 6: mf_setup.sh Prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -570,7 +632,8 @@ main() {
   print_system_info
 
   # Phase 2: Dependency Detection
-  detect_dependencies
+  collect_dep_info
+  print_dep_table
 
   # --check mode: show detection only, exit
   if [[ "${1:-}" == "--check" ]]; then

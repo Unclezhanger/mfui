@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────
 # mfui — single-container build
-# Next.js standalone + job-runner + bash kernel + python venv + ffmpeg
+# Next.js standalone + job-runner + bash kernel (v4.1, python-free) + ffmpeg + jq
 # ─────────────────────────────────────────────
 
 # ── Stage 1: dependencies ────────────────────────────────────────────────
@@ -40,6 +40,20 @@ RUN cd mini-services/job-runner \
     && npm run build \
     && npm prune --omit=dev --no-audit --no-fund \
     && rm -rf node_modules/next node_modules/@next node_modules/@swc node_modules/typescript
+
+# ── 最小运行时依赖集（nm_min）──
+# standalone 自带被追踪依赖、job-runner 有自己的 node_modules；根目录运行期只需要：
+#   - prisma CLI（entrypoint db push，node 直调）
+#   - @prisma/client + .prisma 引擎（job-runner 向上解析）
+#   - socket.io（防未追踪引用，体积小）
+# 按 package.json 精确版本全新安装 + 重新 generate，替代 649MB 的全量树
+RUN mkdir -p /app/nm_min/prisma \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/app/package.json','utf8')).dependencies;fs.writeFileSync('/app/nm_min/package.json',JSON.stringify({name:'mfui-runtime',private:true,dependencies:{prisma:p.prisma,'@prisma/client':p['@prisma/client'],'socket.io':p['socket.io']}}))" \
+    && cp /app/prisma/schema.prisma /app/nm_min/prisma/ \
+    && cd /app/nm_min && npm install --omit=dev --no-audit --no-fund \
+    && node node_modules/prisma/build/index.js generate \
+    && cd /app && rm -rf node_modules && mv /app/nm_min/node_modules /app/node_modules \
+    && rm -rf /app/nm_min && du -sm node_modules
 # prepare_standalone 等价操作：删掉构建快照，换成指向源目录的符号链接
 # （与 start.sh 保持一致，防止 API 读到构建时刻的旧 db/musicfeed 数据）
 RUN cd .next/standalone \
@@ -50,10 +64,25 @@ RUN cd .next/standalone \
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────
 FROM node:20-bookworm-slim AS runtime
+# jq：musicfeed v4.1 内核的 JSON 解析/标签引擎全部基于 jq + ffmpeg + 纯 bash，
+# 容器内不再有 python3/venv/mutagen（旧 .venv 卷随之移除）。
+# 不装 apt ffmpeg：Debian 的 ffmpeg 会拖进 GL/LLVM/ICU/语音合成等 ~400MB 的图形链，
+# 内核只用 -c:a copy / ffmetadata / mjpeg 封面 / crop——静态构建完全覆盖。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg python3 python3-venv python3-pip ca-certificates curl tini gosu \
+        jq ca-certificates curl xz-utils tini gosu \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/apt/*
+
+# 静态 ffmpeg/ffprobe（johnvansickle 构建，含 libopus/mjpeg/crop 全部所需能力）
+RUN case "$(uname -m)" in \
+        aarch64|arm64) FF_ASSET="ffmpeg-release-arm64-static" ;; \
+        *)             FF_ASSET="ffmpeg-release-amd64-static" ;; \
+    esac \
+    && curl -fsSL --retry 3 "https://johnvansickle.com/ffmpeg/releases/$FF_ASSET.tar.xz" -o /tmp/ff.tar.xz \
+    && tar -xJf /tmp/ff.tar.xz -C /tmp --strip-components=1 --wildcards '*/ffmpeg' '*/ffprobe' \
+    && mv /tmp/ffmpeg /usr/local/bin/ffmpeg && mv /tmp/ffprobe /usr/local/bin/ffprobe \
+    && rm -f /tmp/ff.tar.xz && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
+    && ffmpeg -version | head -1 && ffprobe -version | head -1
 
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -72,18 +101,24 @@ COPY --from=builder /app/musicfeed ./musicfeed
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 
+# 删 npm/yarn/corepack：运行期 prisma 用 node 直调（见 entrypoint），无需包管理器
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/lib/node_modules/yarn /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/corepack
+
 # .env（DATABASE_URL 相对 prisma/ 解析）与目录占位；entrypoint 会在缺失时兜底
 RUN mkdir -p db musicfeed/log \
     && echo 'DATABASE_URL="file:../db/custom.db"' > .env
 
 # mf_config.sh：镜像内置一份默认配置，运行期由 /config 卷持久化（见 entrypoint）
-RUN printf 'MF_BASE_DIR="/music"\nMF_DEFAULT_ARTIST_DIR="musicfeed"\nMF_AUDIO_FORMAT="opus"\nMF_LANG="en"\nMF_HIDDEN_DIRS=()\n' > musicfeed/mf_config.sh
+# MF_YTDLP 指向 /config/bin 卷内的独立官方二进制（entrypoint 启动时下载/自更新）
+RUN printf 'MF_BASE_DIR="/music"\nMF_DEFAULT_ARTIST_DIR="musicfeed"\nMF_AUDIO_FORMAT="opus"\nMF_LANG="en"\nMF_HIDDEN_DIRS=()\nMF_YTDLP="/config/bin/yt-dlp"\nMF_YTDLP_CHANNEL="stable"\n' > musicfeed/mf_config.sh
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # 持久化：数据库 / 日志 / 配置 / yt-dlp venv（防重建丢自动更新）
-VOLUME ["/app/db", "/app/musicfeed/log", "/config", "/app/.venv"]
+VOLUME ["/app/db", "/app/musicfeed/log", "/config"]
 
 EXPOSE 3010
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
