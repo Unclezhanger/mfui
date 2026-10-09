@@ -30,14 +30,13 @@ services:
     volumes:
       # Music library (must change: your Navidrome/Jellyfin music directory)
       - /path/to/your/music:/music
-      # Database / logs / config / yt-dlp venv persistence
+      # Database / logs / config persistence
+      # (yt-dlp standalone binary is stored inside the /config volume)
       - mfui-db:/app/db
       - mfui-log:/app/musicfeed/log
       - mfui-config:/config
-      - mfui-venv:/app/.venv
 
 volumes:
   mfui-db:
   mfui-log:
   mfui-config:
-  mfui-venv:

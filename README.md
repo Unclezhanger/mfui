@@ -17,9 +17,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Unclezhanger/mfui/releases"><img src="https://img.shields.io/badge/release-v4.4.4-success.svg" alt="Release v4.4.4"></a>
+  <a href="https://github.com/Unclezhanger/mfui/releases"><img src="https://img.shields.io/badge/release-v4.5.0-success.svg" alt="Release v4.5.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://github.com/Unclezhanger/musicfeed"><img src="https://img.shields.io/badge/kernel-musicfeed%20v3.5.2-orange.svg" alt="kernel"></a>
+  <a href="https://github.com/Unclezhanger/musicfeed"><img src="https://img.shields.io/badge/kernel-musicfeed%20v4.1-orange.svg" alt="kernel"></a>
+  <img src="https://img.shields.io/badge/python-free-success.svg" alt="python-free">
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20NAS%20%7C%20Docker-lightgrey.svg" alt="platform">
 </p>
 
@@ -42,6 +43,11 @@ look broken in your library:
 It is built on the
 [musicfeed](https://github.com/Unclezhanger/musicfeed) bash kernel — the CLI
 edition shares the same engine and the same `mf_config.sh`.
+
+> **v4.5 runs on the python-free musicfeed v4.1 kernel.** All tagging, cover
+> handling, JSON parsing and title extraction are done with `ffmpeg`, `jq`
+> and plain Bash — there is no Python, no venv and no mutagen in the
+> container.
 
 ## 📸 Screenshots
 
@@ -115,9 +121,9 @@ docker compose up -d
 ```
 
 Open **http://localhost:3011** — on first start the container automatically
-creates the database, seeds a default config and installs yt-dlp + mutagen
-into a persistent venv (auto-updated on every start; disable with
-`MF_YTDLP_AUTOUPDATE=0`).
+creates the database, seeds a default config and downloads the standalone
+yt-dlp binary into the `/config` volume (auto-updated on every start;
+disable with `MF_YTDLP_AUTOUPDATE=0`). No Python or venv is involved.
 
 Notes:
 
@@ -126,9 +132,8 @@ Notes:
 - The download services run as `MFUI_UID`/`MFUI_GID` (default `1000:1000`).
   Downloaded files in your music library are owned by that user — set the
   two variables in `docker-compose.yml` if your user has a different UID.
-- All state (database, logs, config, venv) lives in named volumes
-  (`mfui-db`, `mfui-log`, `mfui-config`, `mfui-venv`) and survives
-  container upgrades.
+- All state (database, logs, config, yt-dlp binary) lives in named volumes
+  (`mfui-db`, `mfui-log`, `mfui-config`) and survives container upgrades.
 
 <details>
 <summary>Prefer <code>docker run</code>?</summary>
@@ -140,7 +145,7 @@ docker run -d --name mfui --restart unless-stopped \
   -e MFUI_UID=1000 -e MFUI_GID=1000 \
   -v /home/youruser/navidrome/music:/music \
   -v mfui-db:/app/db -v mfui-log:/app/musicfeed/log \
-  -v mfui-config:/config -v mfui-venv:/app/.venv \
+  -v mfui-config:/config \
   ghcr.io/unclezhanger/mfui:latest
 ```
 
@@ -159,7 +164,7 @@ docker compose up -d --build
 
 ### Bare metal (no Docker)
 
-Requires **Node.js ≥ 20**, `ffmpeg`, `python3` (+ `venv`) and bash 4+
+Requires **Node.js ≥ 20**, `ffmpeg`, `jq`, `curl` and bash 4+
 (macOS: `brew install bash` first):
 
 ```bash
@@ -176,6 +181,12 @@ bash start.sh --prod  # production mode on http://localhost:3010
   with normal file tools.
 - To stop: `bash stop.sh`. To update: `git pull`, then repeat
   `start.sh --prod` — it detects the stale build and offers to rebuild.
+- The bare-metal install is also **dependency-clean**: `setup.sh` can drop
+  static `ffmpeg`/`jq` and a standalone `yt-dlp` straight into the project
+  folder — delete the folder to uninstall, nothing touches your system.
+
+> No Python required — the v4.5 kernel uses `ffmpeg` + `jq` + Bash only.
+> yt-dlp is a standalone binary kept in `musicfeed/bin/`.
 
 ## 📖 Using mfui
 
@@ -215,7 +226,7 @@ Browser ──▶ Next.js (:3011 host → :3010 container)
               ├── pages & REST API
               ├── /api/proxy/*  ──▶  job-runner (127.0.0.1:3001, not exposed)
               │                      └── spawns musicfeed kernel (bash)
-              │                            └── yt-dlp + ffmpeg (project venv)
+              │                            └── yt-dlp + ffmpeg (standalone binaries)
               └── /socket.io/*  ──▶ live progress & logs
 ```
 
@@ -237,7 +248,21 @@ config file):
 | Default artist folder | `MF_DEFAULT_ARTIST_DIR` | Pre-selected folder in the download form |
 | Audio format | `MF_AUDIO_FORMAT` | `opus` (smaller, recommended) or `m4a` (iOS/Apple) |
 | Hidden folders | `MF_HIDDEN_DIRS` | Folders hidden from the artist-folder list |
+
 The **interface language** (8 languages) is stored in your browser.
+
+The **yt-dlp channel** is fixed to `stable` in the Docker image. If
+downloads start failing after a YouTube change, just restart the container
+— the entrypoint re-checks yt-dlp on every start and pulls the latest
+stable build automatically:
+
+```bash
+docker restart mfui
+```
+
+Advanced users who want the `nightly` channel (faster anti-bot fixes) can
+switch it in a bare-metal install, or by editing `MF_YTDLP_CHANNEL` in
+`/config/mf_config.sh` and removing `/config/bin/yt-dlp*` before a restart.
 
 ## ❓ FAQ
 
@@ -253,35 +278,25 @@ different UID, set the two variables in `docker-compose.yml`. Bare-metal
 downloads are owned by the user running `start.sh`.
 
 **Downloads fail with 403 / "Sign in to confirm…"**
-YouTube throttles anonymous downloads from datacenter IPs sometimes. mfui
-updates yt-dlp on every container start for a reason — make sure
-`MF_YTDLP_AUTOUPDATE` is not `0`, and re-run after a failure. For
-bare-metal users: `.venv/bin/pip install -U yt-dlp` from the project
-directory (or re-run `bash setup.sh` — it detects an existing nightly
-and refreshes it to the latest).
+YouTube throttles anonymous downloads from datacenter IPs sometimes.
 
-**Optional: run the yt-dlp nightly build.** Nightly releases track YouTube
-changes more closely and can fix breakage days before the stable release.
-To switch (and to update it later, re-run the same command):
+- **Docker:** just restart the container — the entrypoint re-checks yt-dlp
+  on every start and pulls the latest stable build. The nightly channel is
+  intentionally not exposed here.
+- **Bare metal:** re-run `bash musicfeed/mf_setup.sh` and pick
+  **Update to latest stable** or **Switch to nightly**.
 
-```bash
-# Docker container
-docker exec -it mfui /app/.venv/bin/pip install --no-cache-dir --upgrade \
-  "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
-
-# Bare metal (inside the project venv)
-.venv/bin/pip install --no-cache-dir --upgrade \
-  "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
-```
-
-Note: the automatic startup update installs the **stable** release and will
-not undo your nightly — after switching, re-run the command above to refresh
-the nightly (or flip `MF_YTDLP_AUTOUPDATE=0` in docker-compose.yml).
+**Optional: run the yt-dlp nightly build (bare metal only).** Nightly
+releases track YouTube changes more closely and can fix breakage days
+before the stable release. In the Docker image the channel is fixed to
+`stable` — just restart the container to pick up the latest stable build.
+For bare metal, run `bash musicfeed/mf_setup.sh` and pick **Switch to
+NIGHTLY** in the yt-dlp step.
 
 **The UI says a dependency is missing**
 Open the Dashboard — it lists exactly what's missing and the command to
 install it. In Docker everything is bundled, so a missing dependency there
-usually means the venv volume was wiped; just restart the container.
+usually means the `/config` volume was wiped; just restart the container.
 
 **Where do my files go?**
 Into `<music root>/<artist folder>/[subfolder]/`, e.g.
@@ -299,7 +314,7 @@ cd mfui && docker compose pull && docker compose up -d
 cd mfui && git pull && bash start.sh --prod   # offers to rebuild
 ```
 
-All data (database, logs, config, venv) survives updates.
+All data (database, logs, config, yt-dlp binary) survives updates.
 
 **Does bare metal work on macOS?**
 Yes. `start.sh`/`stop.sh` detect that macOS has no `setsid` and emulate it
