@@ -60,7 +60,7 @@ export function Sidebar() {
               rel="noreferrer"
               className="hover:text-foreground hover:underline"
             >
-              v4.4.4
+              v4.5.0
             </a>
             {' · '}
             <a
