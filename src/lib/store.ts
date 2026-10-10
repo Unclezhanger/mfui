@@ -99,6 +99,15 @@ const initialForm: DownloadFormState = {
   mvTracks: {},
 }
 
+/** 由配置生成表单初始值：歌手文件夹、音频格式都以配置（mf_config.sh）为准 */
+function makeInitialForm(cfg: MfConfig): DownloadFormState {
+  return {
+    ...initialForm,
+    artistDir: cfg.MF_DEFAULT_ARTIST_DIR || 'musicfeed',
+    format: cfg.MF_AUDIO_FORMAT === 'm4a' ? 'm4a' : 'opus',
+  }
+}
+
 // ---------- MV 标题提取（与内核 extract_song_info 对齐，v4.3 去掉 " - " 拆分） ----------
 // 书名号 → 引号 → 去前缀截 50 字符；都命中不了返回原标题
 export function extractMvTitleGuess(raw: string): string {
@@ -345,6 +354,8 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
       // 表单默认歌手文件夹 = 配置里的 MF_DEFAULT_ARTIST_DIR（未被用户改动过才回填）
       form: {
         ...s.form,
+        // 音频格式默认值 = 配置里的 MF_AUDIO_FORMAT
+        format: cfg.MF_AUDIO_FORMAT === 'm4a' ? 'm4a' : 'opus',
         artistDir:
           s.form.artistDir === 'musicfeed' || !s.form.artistDir
             ? cfg.MF_DEFAULT_ARTIST_DIR || 'musicfeed'
@@ -393,7 +404,11 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
     const cfg = get().config
     try {
       const updated = await api.updateConfig(cfg)
-      set({ config: updated })
+      // 同步下载表单的默认音频格式，避免设置已改、下载页仍停在旧值
+      set((s) => ({
+        config: updated,
+        form: { ...s.form, format: updated.MF_AUDIO_FORMAT === 'm4a' ? 'm4a' : 'opus' },
+      }))
       // 同步刷新 folders
       const foldersRes = await api.fetchFolders()
       set({ folders: foldersRes.folders, baseDirExists: foldersRes.exists })
@@ -409,9 +424,8 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
   resetForm: () =>
     set((s) => ({
       form: {
-        ...initialForm,
+        ...makeInitialForm(s.config),
         url: s.form.url,
-        artistDir: s.config.MF_DEFAULT_ARTIST_DIR || 'musicfeed',
       },
     })),
 
@@ -474,8 +488,7 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
       confirmTracks: false,
       previewLoading: false,
       form: {
-        ...initialForm,
-        artistDir: s.config.MF_DEFAULT_ARTIST_DIR || 'musicfeed',
+        ...makeInitialForm(s.config),
         url: nextUrl,
       },
     }))
@@ -604,10 +617,7 @@ export const useMusicFeedStore = create<MusicFeedState>((set, get) => ({
       queueDrafts: [],
       queueRun: null,
       // v4.1: 表单也回到初始值（上次链接/文件夹选择不留存），歌手文件夹回填配置默认
-      form: {
-        ...initialForm,
-        artistDir: get().config.MF_DEFAULT_ARTIST_DIR || 'musicfeed',
-      },
+      form: makeInitialForm(get().config),
     })
     // 刷新 folders 缓存：上一个下载可能刚创建了新的歌手文件夹
     void get().refreshFolders()

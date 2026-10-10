@@ -108,13 +108,43 @@ export function serializeConfig(cfg: MfConfig): string {
   return lines.join('\n')
 }
 
+/** WebUI 自己管理（读写）的配置项；其余键（如 MF_YTDLP_CHANNEL、MF_VENV）保存时原样保留 */
+const MANAGED_KEYS = new Set([
+  'MF_LANG',
+  'MF_BASE_DIR',
+  'MF_YTDLP',
+  'MF_NODE_PATH',
+  'MF_DEFAULT_ARTIST_DIR',
+  'MF_AUDIO_FORMAT',
+  'MF_HIDDEN_DIRS',
+])
+
+/**
+ * 取出旧配置里 WebUI 不管理的单行赋值（KEY=... / declare -a KEY=...）。
+ * 例如 mf_setup.sh / entrypoint.sh 写入的 MF_YTDLP_CHANNEL：
+ * 若不保留，在设置页保存一次就会丢失频道选择（nightly 被悄悄降级回 stable）。
+ */
+function extractUnmanagedLines(raw: string): string[] {
+  const out: string[] = []
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^(?:declare\s+-a\s+)?([A-Z][A-Z0-9_]*)=/)
+    if (m && !MANAGED_KEYS.has(m[1])) out.push(line)
+  }
+  return out
+}
+
 export function writeConfig(cfg: MfConfig): void {
-  // 备份原文件
+  let extras: string[] = []
+  // 备份原文件，并保留其中 WebUI 不管理的配置项
   if (fs.existsSync(CONFIG_PATH)) {
     const bak = CONFIG_PATH + '.bak'
     fs.copyFileSync(CONFIG_PATH, bak)
+    extras = extractUnmanagedLines(fs.readFileSync(CONFIG_PATH, 'utf8'))
   }
-  const content = serializeConfig(cfg)
+  let content = serializeConfig(cfg)
+  if (extras.length > 0) {
+    content = content.replace(/\n*$/, '\n') + extras.join('\n') + '\n'
+  }
   fs.writeFileSync(CONFIG_PATH, content, { encoding: 'utf8', mode: 0o755 })
 }
 

@@ -57,9 +57,23 @@ case "$YTDLP_CHANNEL" in
     nightly) YTDLP_REPO="yt-dlp/yt-dlp-nightly-builds" ;;
     *)       YTDLP_REPO="yt-dlp/yt-dlp" ;;
 esac
+# 下载到 $1.part 临时文件，校验 --version 通过后才原子替换到 $1：
+#   - --retry-all-errors：DNS 未就绪/连接被拒等瞬时错误也重试（Docker Desktop 刚启动时常见）
+#   - --connect-timeout/--max-time：网络卡住时不会无限阻塞容器启动
+#   - 失败时清理临时文件，不会留下半截二进制
 fetch_ytdlp() {
-    curl -fsSL --retry 3 -o "$1" \
-        "https://github.com/$YTDLP_REPO/releases/latest/download/$YTDLP_ASSET" && chmod +x "$1"
+    local out="$1.part"
+    rm -f "$out"
+    if curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+            --connect-timeout 15 --max-time 600 -o "$out" \
+            "https://github.com/$YTDLP_REPO/releases/latest/download/$YTDLP_ASSET" \
+        && chmod +x "$out" \
+        && timeout 60 "$out" --version >/dev/null 2>&1 \
+        && mv -f "$out" "$1"; then
+        return 0
+    fi
+    rm -f "$out"
+    return 1
 }
 # 轻量查最新版本号（GitHub API；失败返回空 → 跳过更新）
 latest_ytdlp_version() {

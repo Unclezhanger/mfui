@@ -15,8 +15,15 @@ services:
     environment:
       # yt-dlp auto-update (enabled by default; set to 0 to disable, use build-time version only)
       MF_YTDLP_AUTOUPDATE: "1"
-      # Timezone (affects log timestamps and 'today's downloads' statistics)
-      TZ: Asia/Shanghai
+      # Timezone (optional; the container defaults to UTC). The web UI always
+      # shows times in your browser's timezone and computes "today's downloads"
+      # there, so this only sets the container's own clock for plain-text
+      # kernel log lines. Uncomment and adjust if you want local time there.
+      # TZ: Australia/Sydney
+      # Debugging: set to "1" to print every database (Prisma) SQL query to the
+      # container log. Off by default (it is very noisy). After changing it run
+      # `docker compose up -d` so the container is recreated with the new value.
+      # MF_PRISMA_LOG_QUERY: "1"
       # UID/GID the download services run as (defaults 1000:1000).
       # Downloaded files in the music library are owned by this user, so
       # Navidrome / music-tag-web / your own user can manage them freely.

@@ -88,13 +88,17 @@ function findCommand(name: string): string | null {
   }
 }
 
+/** yt-dlp 独立二进制（PyInstaller onefile）每次启动要先解压自身，首次冷启动明显更慢
+ *（Docker Desktop / 模拟层上可能超过 5s），超时会被误判为「未安装」，所以单独放宽。 */
+const YTDLP_VERSION_TIMEOUT_MS = 15000
+
 /** 安全执行命令，失败返回 null */
-function tryExec(file: string, args: string[]): string | null {
+function tryExec(file: string, args: string[], timeoutMs = 5000): string | null {
   try {
     const out = execFileSync(file, args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5000,
+      timeout: timeoutMs,
     })
     return out.trim()
   } catch {
@@ -138,7 +142,7 @@ function detectYtdlp(): Dependency & { _debug?: unknown } {
       _debug: dbg,
     }
   }
-  const ver = tryExec(bin, ['--version'])
+  const ver = tryExec(bin, ['--version'], YTDLP_VERSION_TIMEOUT_MS)
   dbg.tryExecResult = ver
   return {
     installed: !!ver,
@@ -202,8 +206,11 @@ function detectJq(): Dependency {
   }
 }
 
-export async function GET() {
-  // 收集 debug 信息，帮助诊断为什么某些命令找不到
+/**
+ * 诊断信息：只在 yt-dlp 检测失败时才收集。
+ * 这里会额外起好几个子进程（which / 直接执行 yt-dlp），成功路径不该每次都付出这个代价。
+ */
+function collectDebug() {
   const debug = {
     pid: process.pid,
     cwd: process.cwd(),
@@ -252,6 +259,10 @@ export async function GET() {
     debug.ytdlpExecTest = `ERROR: ${(e as Error).message}`
   }
 
+  return debug
+}
+
+export async function GET() {
   const deps: Dependencies = {
     ytdlp: detectYtdlp(),
     ffmpeg: detectFfmpeg(),
@@ -259,16 +270,16 @@ export async function GET() {
     node: detectNode(),
   }
 
-  // 如果 ytdlp 检测失败，把 debug 信息也返回
+  // detectYtdlp 会带上内部 _debug（路径探测过程），拆出来，不随成功响应返回
+  const { _debug: ytdlpInternal, ...ytdlp } = deps.ytdlp as Dependency & { _debug?: unknown }
+
+  // 如果 ytdlp 检测失败，才收集并返回诊断信息，帮助排查为什么命令找不到
   if (!deps.ytdlp.installed) {
     return NextResponse.json({
       ...deps,
-      _debug: {
-        ...debug,
-        ytdlpInternal: (deps.ytdlp as Dependency & { _debug?: unknown })._debug,
-      },
+      _debug: { ...collectDebug(), ytdlpInternal },
     })
   }
 
-  return NextResponse.json(deps)
+  return NextResponse.json({ ...deps, ytdlp })
 }

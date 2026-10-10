@@ -141,7 +141,7 @@ Notes:
 ```bash
 docker run -d --name mfui --restart unless-stopped \
   -p 3011:3010 \
-  -e MF_YTDLP_AUTOUPDATE=1 -e TZ=Asia/Shanghai \
+  -e MF_YTDLP_AUTOUPDATE=1 \
   -e MFUI_UID=1000 -e MFUI_GID=1000 \
   -v /home/youruser/navidrome/music:/music \
   -v mfui-db:/app/db -v mfui-log:/app/musicfeed/log \
@@ -246,7 +246,7 @@ config file):
 | --- | --- | --- |
 | Music root | `MF_BASE_DIR` | Every artist folder is created here |
 | Default artist folder | `MF_DEFAULT_ARTIST_DIR` | Pre-selected folder in the download form |
-| Audio format | `MF_AUDIO_FORMAT` | `opus` (smaller, recommended) or `m4a` (iOS/Apple) |
+| Audio format | `MF_AUDIO_FORMAT` | Default format pre-selected in the download form (still changeable per download): `opus` (smaller, recommended) or `m4a` (iOS/Apple) |
 | Hidden folders | `MF_HIDDEN_DIRS` | Folders hidden from the artist-folder list |
 
 The **interface language** (8 languages) is stored in your browser.
@@ -261,8 +261,17 @@ docker restart mfui
 ```
 
 Advanced users who want the `nightly` channel (faster anti-bot fixes) can
-switch it in a bare-metal install, or by editing `MF_YTDLP_CHANNEL` in
-`/config/mf_config.sh` and removing `/config/bin/yt-dlp*` before a restart.
+switch it in a bare-metal install, or in Docker by setting `MF_YTDLP_CHANNEL`
+in `/config/mf_config.sh` and restarting the container:
+
+```bash
+docker exec mfui sed -i 's/^MF_YTDLP_CHANNEL=.*/MF_YTDLP_CHANNEL="nightly"/' /config/mf_config.sh
+docker restart mfui
+```
+
+Saving on the Settings page keeps this value. (If you disabled auto-update
+with `MF_YTDLP_AUTOUPDATE=0`, also delete `/config/bin/yt-dlp*` before the
+restart so the new channel's build is downloaded.)
 
 ## ❓ FAQ
 
@@ -298,6 +307,23 @@ Open the Dashboard — it lists exactly what's missing and the command to
 install it. In Docker everything is bundled, so a missing dependency there
 usually means the `/config` volume was wiped; just restart the container.
 
+**yt-dlp is missing right after the first start (Docker)**
+The container downloads the standalone yt-dlp from GitHub on first start
+(with retries and timeouts). If the network was not ready, the download can
+fail while the web UI still starts. Check
+`docker logs mfui 2>&1 | grep entrypoint` — a `yt-dlp download failed` line
+confirms it — then `docker restart mfui` to retry. If the Dashboard still
+shows yt-dlp as missing although the log shows a successful download, wait a
+few seconds and reload the page (the first launch of the binary can be slow).
+
+**How do I see the database (SQL) queries in the log? (debugging)**
+They are off by default because they flood the log. Set
+`MF_PRISMA_LOG_QUERY=1` to turn them on: in Docker add it under
+`environment:` in `docker-compose.yml` (or `-e MF_PRISMA_LOG_QUERY=1` with
+`docker run`) and recreate the container with `docker compose up -d`; on bare
+metal start with `MF_PRISMA_LOG_QUERY=1 bash start.sh` (add `--prod` for
+production mode). Remove it again when you are done.
+
 **Where do my files go?**
 Into `<music root>/<artist folder>/[subfolder]/`, e.g.
 `/music/Ed Sheeran/Ed Sheeran - Shape of You.opus`. The artist folder and
@@ -317,9 +343,11 @@ cd mfui && git pull && bash start.sh --prod   # offers to rebuild
 All data (database, logs, config, yt-dlp binary) survives updates.
 
 **Does bare metal work on macOS?**
-Yes. `start.sh`/`stop.sh` detect that macOS has no `setsid` and emulate it
-automatically (via perl), so process management behaves exactly as on Linux.
-Two macOS specifics:
+Not tested yet. On macOS please use the **Docker** install (Docker Desktop):
+that path is tested and works. The bare-metal scripts do contain macOS
+handling, but it has not been verified on a real Mac, so treat it as
+experimental. `start.sh`/`stop.sh` detect that macOS has no `setsid` and try
+to emulate it via perl. Two macOS specifics:
 
 - **macOS 11 (Big Sur) or older:** the `esbuild` binary bundled with `tsx`
   4.x is built for macOS 12+ and fails with a dyld error. `setup.sh` detects
