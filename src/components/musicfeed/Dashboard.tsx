@@ -12,8 +12,10 @@ import {
   Plus,
   FolderOpen,
   Languages,
+  RefreshCw,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useCallback, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -24,6 +26,7 @@ import { useT } from '@/lib/i18n'
 import { UI_LANGUAGES } from '@/lib/i18n-dicts'
 import { StatusBadge } from './StatusBadge'
 import { LinkTypeBadge } from './LinkTypeBadge'
+import type { UpdateCheck, UpdateRow } from '@/lib/types'
 
 const depIcon = {
   ytdlp: Terminal,
@@ -161,6 +164,9 @@ export function Dashboard() {
         />
       </div>
 
+      {/* 更新检查：容器用户发现"该重启了"（重启后 entrypoint 自动拉取 yt-dlp/node sidecar） */}
+      <UpdatesCard />
+
       {/* 左：最近任务 / 右：快速开始 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
@@ -233,6 +239,98 @@ export function Dashboard() {
         </Card>
       </div>
     </div>
+  )
+}
+
+/** 单行：名称 + 当前 → 最新 + 状态徽章 */
+function UpdateRowLine({ name, row }: { name: string; row: UpdateRow }) {
+  const t = useT()
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-20 shrink-0 font-medium">{name}</span>
+      <span className="font-mono text-muted-foreground">
+        {row.current ?? '—'}
+        {row.latest && row.latest !== row.current && (
+          <>
+            {' → '}
+            <span className="text-foreground">{row.latest}</span>
+          </>
+        )}
+      </span>
+      {row.updateAvailable === true ? (
+        <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          {t('可更新')}
+        </Badge>
+      ) : row.updateAvailable === false ? (
+        <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+          {t('已是最新')}
+        </Badge>
+      ) : null}
+    </div>
+  )
+}
+
+/** 更新检查卡片：手动触发 /api/updates，展示 应用 / yt-dlp / node 三项对比与重启提示 */
+function UpdatesCard() {
+  const t = useT()
+  const [phase, setPhase] = useState<'idle' | 'checking' | 'done' | 'error'>('idle')
+  const [data, setData] = useState<UpdateCheck | null>(null)
+
+  const check = useCallback(async () => {
+    setPhase('checking')
+    try {
+      const r = await fetch('/api/updates', { cache: 'no-store' })
+      if (!r.ok) throw new Error(String(r.status))
+      setData((await r.json()) as UpdateCheck)
+      setPhase('done')
+    } catch {
+      setPhase('error')
+    }
+  }, [])
+
+  const rows: Array<{ name: string; row: UpdateRow }> = data
+    ? [
+        { name: t('应用本体'), row: data.app },
+        { name: 'yt-dlp', row: data.ytdlp },
+        { name: 'Node.js', row: data.node },
+      ]
+    : []
+  const anyUpdate = rows.some((r) => r.row.updateAvailable === true)
+  const appUpdate = data?.app.updateAvailable === true
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">{t('更新检查')}</CardTitle>
+          <Button size="sm" variant="outline" onClick={check} disabled={phase === 'checking'}>
+            <RefreshCw className={cn('size-4', phase === 'checking' && 'animate-spin')} />
+            {phase === 'checking' ? t('检查中…') : t('检查更新')}
+          </Button>
+        </div>
+      </CardHeader>
+      {(phase === 'done' || phase === 'error') && (
+        <CardContent className="space-y-2 pt-0">
+          {phase === 'error' && (
+            <p className="text-xs text-rose-600 dark:text-rose-400">{t('检查失败，请稍后重试')}</p>
+          )}
+          {rows.map((r) => (
+            <UpdateRowLine key={r.name} name={r.name} row={r.row} />
+          ))}
+          {data && anyUpdate && (
+            <p className="pt-1 text-xs text-muted-foreground">
+              {data.runtime === 'container'
+                ? appUpdate
+                  ? t('应用本体更新：拉取新镜像并重建容器')
+                  : t('重启容器即自动更新（entrypoint 启动时拉取）')
+                : appUpdate
+                  ? t('应用本体更新：git pull 更新代码后重启')
+                  : t('重启 start.sh 即自动更新')}
+            </p>
+          )}
+        </CardContent>
+      )}
+    </Card>
   )
 }
 

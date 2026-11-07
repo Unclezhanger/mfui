@@ -324,6 +324,18 @@ const DICT: Record<string, string> = {
   '未知': 'Unknown',
   '播放列表': 'Playlist',
   '单曲': 'Song',
+  // ---------- v4.7 更新检查（Dashboard） ----------
+  '更新检查': 'Update check',
+  '检查更新': 'Check for updates',
+  '检查中…': 'Checking…',
+  '检查失败，请稍后重试': 'Check failed — try again later',
+  '已是最新': 'Up to date',
+  '可更新': 'Update available',
+  '应用本体': 'App',
+  '重启容器即自动更新（entrypoint 启动时拉取）': 'Restart the container to update (the entrypoint fetches it at startup)',
+  '应用本体更新：拉取新镜像并重建容器': 'App update: pull the new image and recreate the container',
+  '重启 start.sh 即自动更新': 'Restart start.sh to update automatically',
+  '应用本体更新：git pull 更新代码后重启': 'App update: git pull, then restart',
 }
 
 export type TFunc = (zh: string, params?: Record<string, string | number>) => string

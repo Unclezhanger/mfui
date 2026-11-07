@@ -134,5 +134,13 @@ export const fr: Record<string, string> = {
   '音乐根目录下的文件夹：': 'Dossiers sous le répertoire racine :',
   '选歌手文件夹列表中要过滤掉的目录；可全部不选': 'Répertoires à exclure de la liste des dossiers d artistes ; aucun requis',
   '{n} 首': '{n} titres',
+  // v4.7 更新检查（Dashboard）
+  '更新检查': 'Recherche de mises à jour', '检查更新': 'Rechercher des mises à jour', '检查中…': 'Vérification…',
+  '检查失败，请稍后重试': 'Échec de la vérification — réessayez plus tard',
+  '已是最新': 'À jour', '可更新': 'Mise à jour disponible', '应用本体': 'App',
+  '重启容器即自动更新（entrypoint 启动时拉取）': 'Redémarrez le conteneur pour mettre à jour (récupéré par l’entrypoint au démarrage)',
+  '应用本体更新：拉取新镜像并重建容器': 'Mise à jour de l’app : tirez la nouvelle image et recréez le conteneur',
+  '重启 start.sh 即自动更新': 'Redémarrez start.sh pour mettre à jour automatiquement',
+  '应用本体更新：git pull 更新代码后重启': 'Mise à jour de l’app : git pull, puis redémarrez',
 }
 

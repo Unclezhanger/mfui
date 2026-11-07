@@ -50,8 +50,28 @@ export interface Dependencies {
   ytdlp: Dependency
   ffmpeg: Dependency
   jq: Dependency
-  /** WebUI / job-runner 运行时（node>=20）；面板列出用于环境体检 */
+  /** WebUI / job-runner 运行时（node>=22，内核 yt-dlp EJS 运行时最低要求）；面板列出用于环境体检 */
   node: Dependency
+}
+
+// ---------- 更新检查（/api/updates，Dashboard"检查更新"卡片） ----------
+
+export interface UpdateRow {
+  /** 当前版本；读取失败为 null */
+  current: string | null
+  /** 上游最新版本；网络失败为 null（UI 显示"—"） */
+  latest: string | null
+  /** current < latest；任一侧未知时为 null */
+  updateAvailable: boolean | null
+}
+
+export interface UpdateCheck {
+  /** 容器部署（重启即生效）或裸机部署（提示语不同） */
+  runtime: 'container' | 'bare-metal'
+  app: UpdateRow
+  ytdlp: UpdateRow & { channel: string }
+  node: UpdateRow
+  checkedAt: string
 }
 
 // ---------- 配置（对应 mf_config.sh 的 MF_ 变量） ----------
