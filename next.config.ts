@@ -1,6 +1,20 @@
 import type { NextConfig } from "next";
+import { readFileSync } from "fs";
+
+// 构建期注入应用版本号（Sidebar 徽章 + layout metadata），来源 package.json，
+// bump 版本后界面自动跟随，不再需要手改 UI 字符串
+const APP_VERSION = (() => {
+  try {
+    return (JSON.parse(readFileSync("./package.json", "utf8")) as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_APP_VERSION: APP_VERSION,
+  },
   output: "standalone",
   /* config options here */
   typescript: {

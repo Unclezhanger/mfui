@@ -15,10 +15,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
+
 export const metadata: Metadata = {
   title: "mfui - YouTube Music Downloader",
-  description:
-    "mfui v4.6.0 (kernel musicfeed v4.1) — Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags",
+  description: `mfui v${APP_VERSION} (kernel musicfeed v4.1) — Smart YouTube Music album/playlist/song/MV downloader with metadata, cover art and ID3 tags`,
   keywords: [
     "musicfeed",
     "YouTube Music",

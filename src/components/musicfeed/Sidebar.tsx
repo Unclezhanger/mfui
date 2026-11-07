@@ -60,7 +60,7 @@ export function Sidebar() {
               rel="noreferrer"
               className="hover:text-foreground hover:underline"
             >
-              v4.6.0
+              v{process.env.NEXT_PUBLIC_APP_VERSION ?? '0.0.0'}
             </a>
             {' · '}
             <a
