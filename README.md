@@ -125,6 +125,17 @@ creates the database, seeds a default config and downloads the standalone
 yt-dlp binary into the `/config` volume (auto-updated on every start;
 disable with `MF_YTDLP_AUTOUPDATE=0`). No Python or venv is involved.
 
+The kernel's yt-dlp solves YouTube's JS challenges through a JS runtime
+(minimum **Node.js 22**). The image ships with Node 22, and a **node
+sidecar** covers the gap while the image ages: if the baked node falls
+behind the pinned major line's latest release, the entrypoint downloads an
+official binary (SHA256-verified) into the `/config` volume and uses it for
+the app, job-runner and download workers — no image rebuild needed. It only
+auto-updates **within** the pinned major; to move to a newer major set
+`MF_NODE_MAJOR` in `/config/mf_config.sh` (e.g. `"24"`) and restart. Disable
+with `MF_NODE_AUTOUPDATE=0`; a rebuilt image that catches up removes the
+stale sidecar automatically.
+
 Notes:
 
 - The web UI listens on **host port 3011** (container-internal 3010) so it
@@ -164,8 +175,10 @@ docker compose up -d --build
 
 ### Bare metal (no Docker)
 
-Requires **Node.js ≥ 20**, `ffmpeg`, `jq`, `curl` and bash 4+
-(macOS: `brew install bash` first):
+Requires **Node.js ≥ 22**, `ffmpeg`, `jq`, `curl` and bash 4+
+(macOS: `brew install bash` first; Node 22 is the kernel's yt-dlp
+JS-runtime minimum — `setup.sh` offers a project-local Node 22 if your
+system one is older):
 
 ```bash
 git clone https://github.com/Unclezhanger/mfui.git
@@ -272,6 +285,15 @@ docker restart mfui
 Saving on the Settings page keeps this value. (If you disabled auto-update
 with `MF_YTDLP_AUTOUPDATE=0`, also delete `/config/bin/yt-dlp*` before the
 restart so the new channel's build is downloaded.)
+
+The **node sidecar** (container only) works the same way: the entrypoint
+keeps an official Node.js in `/config/node` only while the image's baked
+node is behind the latest release of the pinned major line (`MF_NODE_MAJOR`,
+default `22`), and skips the download once a rebuilt image catches up.
+Normally you never touch it; to move to a newer major line or force a
+refresh, set `MF_NODE_MAJOR` in `/config/mf_config.sh` (e.g. `"24"`) and
+restart, and to drop it entirely set `MF_NODE_AUTOUPDATE=0` and delete
+`/config/node`:
 
 ## ❓ FAQ
 

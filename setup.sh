@@ -106,7 +106,7 @@ print_system_info() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 collect_dep_info() {
-  # musicfeed v4.1 内核依赖：node>=20（WebUI 运行时）、ffmpeg、jq、curl、
+  # musicfeed v4.1 内核依赖：node>=22（WebUI 运行时；内核 yt-dlp EJS 运行时最低要求）、ffmpeg、jq、curl、
   # yt-dlp（项目内独立二进制 musicfeed/bin/yt-dlp 优先）。python3/venv/mutagen 已移除。
   # 项目内隔离安装目录（tools/bin 为 node 链接，musicfeed/bin 为 yt-dlp/ffmpeg/jq 静态件）
   TOOLS_BIN="$SCRIPT_DIR/tools/bin"
@@ -135,7 +135,7 @@ collect_dep_info() {
   if command -v node &>/dev/null; then
     DEP_NODE_VER=$(node --version 2>/dev/null)
     major=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
-    [[ -n "$major" && "$major" -ge 20 ]] && DEP_NODE_OK=1 || DEP_NODE_OK=0
+    [[ -n "$major" && "$major" -ge 22 ]] && DEP_NODE_OK=1 || DEP_NODE_OK=0
     # 标注 node 来源（系统 / 项目内）
     [[ "$(command -v node)" == "$SCRIPT_DIR/tools/"* ]] && DEP_NODE_VER="$DEP_NODE_VER (project)" || DEP_NODE_VER="$DEP_NODE_VER (system)"
   else
@@ -170,7 +170,7 @@ print_dep_table() {
   echo "  ┌────────────────────────┬──────────────────────────────┬────────┐"
   echo "  │ Dependency             │ Version                      │ Status │"
   echo "  ├────────────────────────┼──────────────────────────────┼────────┤"
-  print_dep_row "node>=20 (WebUI)" "$DEP_NODE_VER"   $DEP_NODE_OK           true
+  print_dep_row "node>=22 (WebUI)" "$DEP_NODE_VER"   $DEP_NODE_OK           true
   print_dep_row "ffmpeg"  "$DEP_FFMPEG_VER"  $DEP_FFMPEG_INSTALLED  true
   print_dep_row "jq"      "$DEP_JQ_VER"      $DEP_JQ_INSTALLED      true
   if [[ $DEP_BIN_YTDLP_INSTALLED -eq 1 ]]; then
@@ -244,7 +244,7 @@ install_system_deps() {
   }
 
   install_project_node() {
-    local ver="22.14.0" asset dir
+    local ver="22.23.4" asset dir
     case "$(uname -m)" in
       aarch64|arm64) asset="linux-arm64" ;;
       *)             asset="linux-x64" ;;
@@ -292,10 +292,10 @@ install_system_deps() {
       "sudo apt update && sudo apt install -y curl" "y"
   fi
 
-  # ── node: required, >= 20（WebUI/job-runner 运行时）──
+  # ── node: required, >= 22（WebUI/job-runner 运行时；内核 yt-dlp EJS 运行时最低要求）──
   if [[ $DEP_NODE_OK -ne 1 ]]; then
     echo ""
-    echo "  ${C_BOLD}[node]${C_RESET} — Requires Node.js >= 20 (current: ${DEP_NODE_VER:-not installed})"
+    echo "  ${C_BOLD}[node]${C_RESET} — Requires Node.js >= 22 (current: ${DEP_NODE_VER:-not installed})"
     case "$(ask_choice "    How should Node.js be installed?" "Project-local (official binary, no sudo)" "Project-local (official binary, no sudo)" "System (NodeSource, sudo)")" in
       "System (NodeSource, sudo)")
         run_install "node 22" "$DEP_NODE_VER" "Install Node.js 22 (NodeSource)" \

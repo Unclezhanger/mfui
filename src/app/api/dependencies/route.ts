@@ -177,13 +177,13 @@ function detectNode(): Dependency {
     return {
       installed: false,
       required: true,
-      installHint: '必需（WebUI/job-runner 运行时，>=20）：NodeSource 或 nvm 安装',
+      installHint: '必需（WebUI/job-runner 运行时，>=22；内核 yt-dlp EJS 运行时最低要求）：NodeSource 或 nvm 安装',
     }
   }
   const ver = tryExec(bin, ['--version'])
   const major = parseInt((ver || '').replace(/^v/, ''), 10)
   return {
-    installed: !!ver && major >= 20,
+    installed: !!ver && major >= 22,
     version: ver || undefined,
     required: true,
   }

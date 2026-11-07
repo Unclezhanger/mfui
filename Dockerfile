@@ -5,7 +5,8 @@
 
 # ── Stage 1: dependencies ────────────────────────────────────────────────
 # 国内构建可加速：docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn .
-FROM node:20-bookworm-slim AS deps
+# node>=22：内核 yt-dlp（EJS JS 挑战运行时）的最低要求，node 20 会被判 (unsupported)
+FROM node:22-bookworm-slim AS deps
 ARG NPM_REGISTRY=https://registry.npmjs.org
 # openssl CLI：prisma 用它探测平台版本（slim 镜像缺失时误判为 1.1.x）
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
@@ -63,7 +64,7 @@ RUN cd .next/standalone \
     && echo 'DATABASE_URL="file:../db/custom.db"' > .env
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 # jq：musicfeed v4.1 内核的 JSON 解析/标签引擎全部基于 jq + ffmpeg + 纯 bash，
 # 容器内不再有 python3/venv/mutagen（旧 .venv 卷随之移除）。
 # 不装 apt ffmpeg：Debian 的 ffmpeg 会拖进 GL/LLVM/ICU/语音合成等 ~400MB 的图形链，
@@ -89,7 +90,10 @@ ENV NODE_ENV=production \
     PORT=3010 \
     HOSTNAME=0.0.0.0 \
     MF_PORT_JOB=3001 \
-    MF_YTDLP_AUTOUPDATE=1
+    MF_YTDLP_AUTOUPDATE=1 \
+    # node sidecar 钉定的 major 线（entrypoint 在镜像 node 落后于该线最新版时下载）。
+    # 基础镜像升大版本时同步改这里；用户可在 /config 配置里用 MF_NODE_MAJOR 覆盖。
+    MF_NODE_MAJOR=22
 
 # Next standalone（含 static，构建期已复制）+ 运行期依赖（tsx/prisma client/socket.io）
 # 体积优化：mini-services 整个目录本身就包含 job-runner/node_modules（builder 阶段

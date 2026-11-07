@@ -15,6 +15,12 @@ services:
     environment:
       # yt-dlp auto-update (enabled by default; set to 0 to disable, use build-time version only)
       MF_YTDLP_AUTOUPDATE: "1"
+      # Node.js sidecar auto-update: when the image-baked node falls behind the
+      # pinned major line's latest release (e.g. yt-dlp raises its JS-runtime
+      # minimum again), the entrypoint downloads an official binary into /config
+      # and uses it — no image rebuild needed. Default on; set to "0" to disable.
+      # To move to a newer major, set MF_NODE_MAJOR in /config/mf_config.sh.
+      # MF_NODE_AUTOUPDATE: "1"
       # Timezone (optional; the container defaults to UTC). The web UI always
       # shows times in your browser's timezone and computes "today's downloads"
       # there, so this only sets the container's own clock for plain-text
