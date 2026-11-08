@@ -34,18 +34,41 @@ function cmpVer(a: string, b: string): number {
   return 0
 }
 
+/**
+ * 回退：github.com releases/latest 的 302 Location 自带版本号，
+ * 不消耗 api.github.com 匿名配额（60 次/小时/IP，超额时 API 全 403）
+ */
+async function ghLatestTagViaRedirect(repo: string): Promise<string | null> {
+  try {
+    const r = await fetch(`https://github.com/${repo}/releases/latest`, {
+      method: 'HEAD',
+      redirect: 'manual',
+      headers: GH_HEADERS,
+      signal: AbortSignal.timeout(8000),
+    })
+    const loc = r.headers.get('location') ?? ''
+    const tag = loc.split('/tag/')[1]?.split(/[?#]/)[0] ?? ''
+    return tag ? tag.replace(/^v/, '') : null
+  } catch {
+    return null
+  }
+}
+
 async function ghLatestTag(repo: string): Promise<string | null> {
   try {
     const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
       headers: GH_HEADERS,
       signal: AbortSignal.timeout(8000),
     })
-    if (!r.ok) return null
-    const j = (await r.json()) as { tag_name?: string }
-    return j.tag_name?.replace(/^v/, '') ?? null
+    if (r.ok) {
+      const j = (await r.json()) as { tag_name?: string }
+      const tag = j.tag_name?.replace(/^v/, '')
+      if (tag) return tag
+    }
   } catch {
-    return null
+    /* fall through to redirect probe */
   }
+  return ghLatestTagViaRedirect(repo)
 }
 
 async function latestNodeInMajor(major: number): Promise<string | null> {

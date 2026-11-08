@@ -265,7 +265,12 @@ function UpdateRowLine({ name, row }: { name: string; row: UpdateRow }) {
         <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
           {t('已是最新')}
         </Badge>
-      ) : null}
+      ) : (
+        // latest 未知（GitHub 双通道都失败）：如实显示，不冒充"已是最新"
+        <Badge variant="outline" className="text-muted-foreground">
+          {t('未知')}
+        </Badge>
+      )}
     </div>
   )
 }

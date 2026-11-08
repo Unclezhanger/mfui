@@ -264,36 +264,63 @@ config file):
 
 The **interface language** (8 languages) is stored in your browser.
 
-The **yt-dlp channel** is fixed to `stable` in the Docker image. If
-downloads start failing after a YouTube change, just restart the container
-— the entrypoint re-checks yt-dlp on every start and pulls the latest
-stable build automatically:
+### Updating yt-dlp and Node.js in the container
+
+The entrypoint re-checks both on **every container start** — restarting is
+the only routine action:
 
 ```bash
 docker restart mfui
+# → pulls the latest build of the selected yt-dlp channel
+# → refreshes the Node.js sidecar within its major line (only if the image's
+#   baked node trails the pinned line's latest release)
 ```
 
-Advanced users who want the `nightly` channel (faster anti-bot fixes) can
-switch it in a bare-metal install, or in Docker by setting `MF_YTDLP_CHANNEL`
-in `/config/mf_config.sh` and restarting the container:
+**Switch the yt-dlp channel** (default `stable`; `nightly` tracks YouTube
+anti-bot fixes faster). The choice lives in `/config/mf_config.sh` and
+survives restarts — the switch applies at the next start:
 
 ```bash
+# stable → nightly
 docker exec mfui sed -i 's/^MF_YTDLP_CHANNEL=.*/MF_YTDLP_CHANNEL="nightly"/' /config/mf_config.sh
 docker restart mfui
+
+# nightly → back to stable
+docker exec mfui sed -i 's/^MF_YTDLP_CHANNEL=.*/MF_YTDLP_CHANNEL="stable"/' /config/mf_config.sh
+docker restart mfui
 ```
 
-Saving on the Settings page keeps this value. (If you disabled auto-update
-with `MF_YTDLP_AUTOUPDATE=0`, also delete `/config/bin/yt-dlp*` before the
-restart so the new channel's build is downloaded.)
+**Node.js sidecar**: the image ships with Node 22 (the kernel's yt-dlp
+JS-runtime minimum). If yt-dlp ever raises that requirement again while
+the image ages, the entrypoint downloads an official, SHA256-verified
+Node into the `/config` volume at the next start — no image rebuild
+needed. Normally you never touch it. To move to a newer major line, set
+`MF_NODE_MAJOR` (a line in `/config/mf_config.sh` wins over the compose
+env) and restart:
 
-The **node sidecar** (container only) works the same way: the entrypoint
-keeps an official Node.js in `/config/node` only while the image's baked
-node is behind the latest release of the pinned major line (`MF_NODE_MAJOR`,
-default `22`), and skips the download once a rebuilt image catches up.
-Normally you never touch it; to move to a newer major line or force a
-refresh, set `MF_NODE_MAJOR` in `/config/mf_config.sh` (e.g. `"24"`) and
-restart, and to drop it entirely set `MF_NODE_AUTOUPDATE=0` and delete
-`/config/node`:
+```bash
+docker exec mfui sh -c 'sed -i "/^MF_NODE_MAJOR=/d" /config/mf_config.sh; echo "MF_NODE_MAJOR=\"24\"" >> /config/mf_config.sh'
+docker restart mfui
+```
+
+A rebuilt image that catches up with the pinned line removes the stale
+sidecar by itself. To opt out of the sidecar entirely, disable it in
+`docker-compose.yml` (`MF_NODE_AUTOUPDATE: "0"`) or in the config file,
+and delete what was downloaded:
+
+```bash
+docker exec mfui rm -rf /config/node
+```
+
+See what the entrypoint actually did at the last start:
+
+```bash
+docker logs mfui 2>&1 | grep -E "yt-dlp|node"
+```
+
+Bare metal: `bash start.sh` performs the same yt-dlp channel check at
+startup, and `bash musicfeed/mf_setup.sh` → yt-dlp step handles channel
+switching, in-channel updates and the Node.js check interactively.
 
 ## ❓ FAQ
 
@@ -312,17 +339,18 @@ downloads are owned by the user running `start.sh`.
 YouTube throttles anonymous downloads from datacenter IPs sometimes.
 
 - **Docker:** just restart the container — the entrypoint re-checks yt-dlp
-  on every start and pulls the latest stable build. The nightly channel is
-  intentionally not exposed here.
-- **Bare metal:** re-run `bash musicfeed/mf_setup.sh` and pick
-  **Update to latest stable** or **Switch to nightly**.
+  on every start and pulls the latest build of the selected channel. If it
+  keeps failing, switch to the nightly channel (see *Updating yt-dlp and
+  Node.js in the container* above).
+- **Bare metal:** re-run `bash musicfeed/mf_setup.sh` and pick the update /
+  channel option in the yt-dlp step.
 
-**Optional: run the yt-dlp nightly build (bare metal only).** Nightly
-releases track YouTube changes more closely and can fix breakage days
-before the stable release. In the Docker image the channel is fixed to
-`stable` — just restart the container to pick up the latest stable build.
-For bare metal, run `bash musicfeed/mf_setup.sh` and pick **Switch to
-NIGHTLY** in the yt-dlp step.
+**Running the yt-dlp nightly build**
+Nightly releases track YouTube changes more closely and can fix breakage
+days before stable. In Docker, switch the channel in
+`/config/mf_config.sh` and restart (command in the section above). For
+bare metal, run `bash musicfeed/mf_setup.sh` and pick the nightly option
+in the yt-dlp step.
 
 **The UI says a dependency is missing**
 Open the Dashboard — it lists exactly what's missing and the command to
