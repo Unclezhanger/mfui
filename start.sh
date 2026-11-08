@@ -163,9 +163,25 @@ if [[ -x "$MF_BIN_DIR/yt-dlp" ]]; then
   YTDLP_REPO="yt-dlp/yt-dlp"
   [[ "$YTDLP_CHANNEL" == "nightly" ]] && YTDLP_REPO="yt-dlp/yt-dlp-nightly-builds"
   YTDLP_LATEST=$(curl -fsSL --max-time 8 "https://api.github.com/repos/$YTDLP_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)
-  YTDLP_INSTALLED=""
-  [[ -f "$MF_BIN_DIR/yt-dlp.version" ]] && YTDLP_INSTALLED=$(cat "$MF_BIN_DIR/yt-dlp.version")
-  if [[ -n "$YTDLP_LATEST" && "$YTDLP_LATEST" != "$YTDLP_INSTALLED" ]]; then
+  # api.github.com 匿名限额 60 次/小时/IP，超额时回退 github.com 302 Location 提取
+  # 版本号（不计 API 配额，releases/latest 302 到 .../releases/tag/<版本>）
+  if [[ -z "$YTDLP_LATEST" ]]; then
+    YTDLP_LATEST=$(curl -fsSI --max-time 8 "https://github.com/$YTDLP_REPO/releases/latest" 2>/dev/null \
+      | tr -d '\r' | sed -n 's/^[Ll]ocation:.*\/releases\/tag\///p' | head -1)
+  fi
+  # 已装版本以二进制 --version 为准：sidecar（.version 文件）只在本脚本自行下载时
+  # 写入，mf_setup/手动换二进制都会让它与二进制脱节，读它会把旧版本当"已是最新"
+  YTDLP_INSTALLED="$("$MF_BIN_DIR/yt-dlp" --version 2>/dev/null)"
+  if [[ -z "$YTDLP_INSTALLED" && -f "$MF_BIN_DIR/yt-dlp.version" ]]; then
+    YTDLP_INSTALLED=$(cat "$MF_BIN_DIR/yt-dlp.version")
+  fi
+  # sidecar 与二进制漂移时回写对齐（与容器 entrypoint 的同名机制保持一致）
+  if [[ -n "$YTDLP_INSTALLED" && "$YTDLP_INSTALLED" != "$(cat "$MF_BIN_DIR/yt-dlp.version" 2>/dev/null)" ]]; then
+    echo "$YTDLP_INSTALLED" > "$MF_BIN_DIR/yt-dlp.version"
+  fi
+  if [[ -z "$YTDLP_LATEST" ]]; then
+    info "yt-dlp $YTDLP_CHANNEL 检查更新失败（网络？），保留当前版本 ${YTDLP_INSTALLED:-unknown}"
+  elif [[ "$YTDLP_LATEST" != "$YTDLP_INSTALLED" ]]; then
     info "yt-dlp $YTDLP_CHANNEL 更新: ${YTDLP_INSTALLED:-none} → $YTDLP_LATEST"
     YTDLP_ASSET="yt-dlp_linux"
     case "$(uname -m)" in aarch64|arm64) YTDLP_ASSET="yt-dlp_linux_aarch64" ;; esac

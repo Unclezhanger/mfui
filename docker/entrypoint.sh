@@ -85,13 +85,31 @@ fetch_ytdlp() {
     rm -f "$out"
     return 1
 }
-# 轻量查最新版本号（GitHub API；失败返回空 → 跳过更新）
+# 轻量查最新版本号（GitHub API；失败回退 github.com 302 Location——api.github.com
+# 匿名限额 60 次/小时/IP，超额不影响 github.com 主站；两者都失败返回空 → 跳过更新）
 latest_ytdlp_version() {
-    curl -fsSL --max-time 8 "https://api.github.com/repos/$YTDLP_REPO/releases/latest" 2>/dev/null \
-        | jq -r '.tag_name // empty' 2>/dev/null
+    local tag
+    tag=$(curl -fsSL --max-time 8 "https://api.github.com/repos/$YTDLP_REPO/releases/latest" 2>/dev/null \
+        | jq -r '.tag_name // empty' 2>/dev/null)
+    if [ -z "$tag" ]; then
+        tag=$(curl -fsSI --max-time 8 "https://github.com/$YTDLP_REPO/releases/latest" 2>/dev/null \
+            | tr -d '\r' | sed -n 's/^[Ll]ocation:.*\/releases\/tag\///p' | head -1)
+    fi
+    echo "$tag"
 }
+# 已装版本以二进制 --version 为准（sidecar 仅在二进制执行失败时兜底）：
+# sidecar 只在本脚本自行下载时写入，二进制被手动替换后会脱节；发现漂移即回写对齐
 installed_ytdlp_version() {
-    [ -f "$VER_FILE" ] && cat "$VER_FILE" || echo ""
+    local bin_ver
+    bin_ver="$("$YTDLP_BIN" --version 2>/dev/null || true)"
+    if [ -n "$bin_ver" ]; then
+        if [ ! -f "$VER_FILE" ] || [ "$(cat "$VER_FILE" 2>/dev/null)" != "$bin_ver" ]; then
+            echo "$bin_ver" > "$VER_FILE" 2>/dev/null || true
+        fi
+        echo "$bin_ver"
+    elif [ -f "$VER_FILE" ]; then
+        cat "$VER_FILE"
+    fi
 }
 if [ ! -x "$YTDLP_BIN" ]; then
     echo "[entrypoint] downloading standalone yt-dlp ($YTDLP_CHANNEL/$YTDLP_ASSET) ..."
@@ -107,7 +125,11 @@ elif [ "${MF_YTDLP_AUTOUPDATE:-1}" = "1" ]; then
             && echo "$LATEST" > "$VER_FILE" && mv -f "$YTDLP_BIN.new" "$YTDLP_BIN" \
             || echo "[entrypoint] update failed, keep current version"
     else
-        echo "[entrypoint] yt-dlp $YTDLP_CHANNEL up to date ($INSTALLED)"
+        if [ -n "$LATEST" ]; then
+            echo "[entrypoint] yt-dlp $YTDLP_CHANNEL up to date ($INSTALLED)"
+        else
+            echo "[entrypoint] yt-dlp update check failed (network?) — keep ${INSTALLED:-unknown}"
+        fi
     fi
 fi
 [ -x "$YTDLP_BIN" ] && export PATH="$BIN_DIR:$PATH"
@@ -128,7 +150,10 @@ NODE_VER_FILE="$NODE_DIR/version"
 NODE_MAJOR_CFG=$(grep '^MF_NODE_MAJOR=' /config/mf_config.sh | sed -E 's/^MF_NODE_MAJOR="?([^"]*)"?.*/\1/' || true)
 NODE_MAJOR=${NODE_MAJOR_CFG:-${MF_NODE_MAJOR:-22}}
 case "$NODE_MAJOR" in ''|*[!0-9]*) NODE_MAJOR=22 ;; esac
-NODE_AUTO=$(grep '^MF_NODE_AUTOUPDATE=' /config/mf_config.sh | sed -E 's/^MF_NODE_AUTOUPDATE="?([^"]*)"?.*/\1/' || true)
+NODE_AUTO_CFG=$(grep '^MF_NODE_AUTOUPDATE=' /config/mf_config.sh | sed -E 's/^MF_NODE_AUTOUPDATE="?([^"]*)"?.*/\1/' || true)
+# 优先级：compose env（部署级开关，需能覆盖旧卷回填的默认值"1"）> 配置文件 > 默认开。
+# 注意与 MF_NODE_MAJOR 相反——major 是用户在配置里的显式选择，配置优先于 env
+NODE_AUTO=${MF_NODE_AUTOUPDATE:-${NODE_AUTO_CFG:-1}}
 # ver_ge a b：a >= b（sort -V 语义，调用处保证两边非空）
 ver_ge() { [ "$1" = "$(printf '%s\n' "$1" "$2" | sort -V | tail -1)" ]; }
 # 查 MF_NODE_MAJOR 线最新版（nodejs.org dist index 按 version 降序，取首个；失败返回空）
