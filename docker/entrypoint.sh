@@ -123,6 +123,7 @@ elif [ "${MF_YTDLP_AUTOUPDATE:-1}" = "1" ]; then
         echo "[entrypoint] yt-dlp $YTDLP_CHANNEL update: ${INSTALLED:-none} -> $LATEST ..."
         fetch_ytdlp "$YTDLP_BIN.new" \
             && echo "$LATEST" > "$VER_FILE" && mv -f "$YTDLP_BIN.new" "$YTDLP_BIN" \
+            && echo "[entrypoint] yt-dlp $YTDLP_CHANNEL updated to $LATEST" \
             || echo "[entrypoint] update failed, keep current version"
     else
         if [ -n "$LATEST" ]; then
