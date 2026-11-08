@@ -243,8 +243,11 @@ install_system_deps() {
       && chmod +x "$dest"
   }
 
+  # 项目内 node 钉版（yt-dlp EJS 运行时要求 node>=22；升级 = 改此变量重跑 setup.sh）
+  NODE_PIN="22.23.4"
+
   install_project_node() {
-    local ver="22.23.4" asset dir
+    local ver="$NODE_PIN" asset dir
     case "$(uname -m)" in
       aarch64|arm64) asset="linux-arm64" ;;
       *)             asset="linux-x64" ;;
@@ -381,7 +384,17 @@ install_system_deps() {
   fi
 
   if [[ "$(command -v node 2>/dev/null)" == "$SCRIPT_DIR/tools/"* ]]; then
-    ok "node: already project-local (${DEP_NODE_VER%% *})"
+    # 项目内 node 旧于钉版 → 提供更新入口（此前直接跳过，22.14.0 永远升不到新钉版）
+    local _inst="${DEP_NODE_VER%% *}"
+    if [[ "$(printf '%s\n%s\n' "${_inst#v}" "$NODE_PIN" | sort -V | head -1)" == "${_inst#v}" && "${_inst#v}" != "$NODE_PIN" ]]; then
+      case "$(ask_choice "  node ${_inst}: project-local is older than pinned v$NODE_PIN. Update?" "Update project-local (→ v$NODE_PIN)" "Update project-local (→ v$NODE_PIN)" "Keep current (${_inst})")" in
+        "Update project-local"*)
+          run_install "node (project)" "$DEP_NODE_VER" "Update project-local Node.js → v$NODE_PIN" \
+            "install_project_node" "y" ;;
+      esac
+    else
+      ok "node: already project-local (${_inst}, latest pinned v$NODE_PIN)"
+    fi
   elif [[ $DEP_NODE_OK -eq 1 ]]; then
     case "$(ask_choice "  node ${DEP_NODE_VER%% *}: keep system version, install project-local, or upgrade?" "Keep current (system)" "Keep current (system)" "Install project-local (official binary, no sudo)" "Upgrade system (NodeSource, sudo)")" in
       "Install project-local (official binary, no sudo)")
